@@ -8,22 +8,26 @@ SENTINEL is an early, functional security engineering project. The Go service ac
 
 The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the page session. It has no service, sign-in, or persistent storage. Run the local Go service to exercise the backend event path and persistent analyst workflows.
 
-> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, PostgreSQL database, multi-user authentication, RBAC, mTLS, or production deployment configuration. The local JSON store and shared bearer token are development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
+> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, multi-user authentication, RBAC, mTLS, or production deployment configuration. PostgreSQL support does not make this a production service. The local JSON store and shared bearer token are development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
 ## Run locally
 
-Requirements: Go 1.24 or newer.
+Requirements: Go 1.25 or newer. PostgreSQL 14+ is used when `SENTINEL_DATABASE_URL` is set.
 
 ```sh
+docker compose up -d postgres
+export SENTINEL_DATABASE_URL='postgres://sentinel:sentinel-local-only@127.0.0.1:5432/sentinel?sslmode=disable'
+export SENTINEL_ADMIN_TOKEN='local-development-token'
 go run ./cmd/sentinel
 ```
 
-Open <http://127.0.0.1:8080>. Copy the temporary analyst token from the server output and choose **Set analyst token**. To use a stable development token, set `SENTINEL_ADMIN_TOKEN` before starting.
+Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token configured above. The Compose password is only for local development. If Docker is unavailable, omit `SENTINEL_DATABASE_URL`; the service then uses the local JSON development store.
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `SENTINEL_ADDR` | `127.0.0.1:8080` | Listen address; loopback by default |
 | `SENTINEL_DB` | `sentinel-data.json` | Local JSON persistence path |
+| `SENTINEL_DATABASE_URL` | unset | PostgreSQL connection string; enables migrations and SQL storage |
 | `SENTINEL_ADMIN_TOKEN` | Random per start | Bearer token for write routes |
 | `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
 
@@ -32,6 +36,7 @@ Open <http://127.0.0.1:8080>. Copy the temporary analyst token from the server o
 - Versioned Sentinel event envelope (`schema_version: 1.0`) with source, host, timestamp, process metadata, destination, ATT&CK label, and simulation provenance.
 - Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
+- PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, process ancestry assembled only from available process IDs, network metadata view, detection catalog, and audit history.
@@ -42,7 +47,7 @@ Open <http://127.0.0.1:8080>. Copy the temporary analyst token from the server o
 
 1. `POST /api/ingest` accepts a schema `1.0` event (maximum body 1 MiB).
 2. The service validates required fields and bounds, rejects duplicate event IDs, evaluates enabled rules, and stores evidence for matches.
-3. Events, alerts, host/run incident groups, and logical audit records are saved in the local JSON file.
+3. Events, alerts, host/run incident groups, and logical audit records are saved transactionally in PostgreSQL, or in the local JSON file when that development mode is selected.
 4. The dashboard reads actual local API data and sends analyst changes back to authenticated routes.
 5. Sentinel Range replays events individually through `POST /api/ingest`; it evaluates the actual returned alerts against each scenario's declared expected rule IDs.
 
@@ -55,7 +60,7 @@ Read routes: `/api/health`, `/api/overview`, `/api/events`, `/api/endpoints`, `/
 - `internal/model`: versioned Sentinel event, alert, incident, and endpoint types.
 - `internal/detection`: native single-field rule matching.
 - `internal/simulator`: six deterministic synthetic scenario fixtures.
-- `internal/store`: mutex-protected JSON persistence.
+- `internal/store`: PostgreSQL persistence and migrations, plus a mutex-protected JSON development store.
 - `web`: static dashboard and browser-only Pages preview.
 - `docs`: architecture, detection, simulator, testing, and threat-model notes.
 
@@ -67,7 +72,7 @@ The current source has been checked with `go test ./...`, `go vet ./...`, and `n
 
 ## Roadmap
 
-The next major engineering slices are PostgreSQL with migrations and indexed queries; a Windows Rust service using documented event providers; multi-event temporal correlation; authenticated endpoint enrollment and secure transport; and broader API/browser integration tests. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+The next major engineering slices are a Windows Rust service using documented event providers; multi-event temporal correlation; authenticated endpoint enrollment and secure transport; and broader browser end-to-end tests. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

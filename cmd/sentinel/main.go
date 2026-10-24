@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -18,16 +19,29 @@ import (
 )
 
 func main() {
-	path := env("SENTINEL_DB", "sentinel-data.json")
-	db, e := store.Open(path)
-	if e != nil {
-		log.Fatal(e)
+	var db store.Repository
+	if databaseURL := os.Getenv("SENTINEL_DATABASE_URL"); databaseURL != "" {
+		postgres, err := store.OpenPostgres(context.Background(), databaseURL)
+		if err != nil {
+			log.Fatal(err)
+		}
+		db = postgres
+		log.Printf("SENTINEL storage: PostgreSQL")
+	} else {
+		path := env("SENTINEL_DB", "sentinel-data.json")
+		local, err := store.Open(path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		db = local
+		log.Printf("SENTINEL storage: local JSON development mode")
 	}
+	defer db.Close()
 	token := os.Getenv("SENTINEL_ADMIN_TOKEN")
 	if token == "" {
 		b := make([]byte, 24)
-		if _, e = rand.Read(b); e != nil {
-			log.Fatal(e)
+		if _, err := rand.Read(b); err != nil {
+			log.Fatal(err)
 		}
 		token = hex.EncodeToString(b)
 		log.Printf("Temporary analyst token (set SENTINEL_ADMIN_TOKEN to persist): %s", token)
@@ -41,13 +55,20 @@ func main() {
 	}
 	log.Fatal(server.ListenAndServe())
 }
-func routes(db *store.Store, token string) http.Handler {
+func routes(db store.Repository, token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(r.Context()); err != nil {
+			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		jsonOut(w, map[string]any{"status": "ok", "mode": "local-development", "schema_version": "1.0"})
 	})
 	mux.HandleFunc("/api/overview", func(w http.ResponseWriter, r *http.Request) {
-		d := db.Snapshot()
+		d, ok := readData(w, db)
+		if !ok {
+			return
+		}
 		by := map[string]int{}
 		hosts := map[string]bool{}
 		for _, a := range d.Alerts {
@@ -62,10 +83,19 @@ func routes(db *store.Store, token string) http.Handler {
 		}
 		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": 0, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT · NO LIVE SENSORS"})
 	})
-	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Events) })
+	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+		d, ok := readData(w, db)
+		if ok {
+			jsonOut(w, d.Events)
+		}
+	})
 	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		latest := map[string]model.Endpoint{}
-		for _, event := range db.Snapshot().Events {
+		d, ok := readData(w, db)
+		if !ok {
+			return
+		}
+		for _, event := range d.Events {
 			seenAt := event.IngestedAt
 			if seenAt.IsZero() {
 				seenAt = event.Time
@@ -86,9 +116,24 @@ func routes(db *store.Store, token string) http.Handler {
 		}
 		jsonOut(w, endpoints)
 	})
-	mux.HandleFunc("/api/alerts", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Alerts) })
-	mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Incidents) })
-	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Audit) })
+	mux.HandleFunc("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
+		d, ok := readData(w, db)
+		if ok {
+			jsonOut(w, d.Alerts)
+		}
+	})
+	mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {
+		d, ok := readData(w, db)
+		if ok {
+			jsonOut(w, d.Incidents)
+		}
+	})
+	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
+		d, ok := readData(w, db)
+		if ok {
+			jsonOut(w, d.Audit)
+		}
+	})
 	mux.HandleFunc("PATCH /api/alerts/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(r, token) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -225,17 +270,24 @@ func routes(db *store.Store, token string) http.Handler {
 		if req.RunID == "" {
 			req.RunID = fmt.Sprintf("SIM-%d", time.Now().UnixNano())
 		}
-		before := len(db.Snapshot().Alerts)
-		for _, event := range selected.Events {
+		beforeData, ok := readData(w, db)
+		if !ok {
+			return
+		}
+		before := len(beforeData.Alerts)
+		for index, event := range selected.Events {
 			event.SimulationRunID = req.RunID
-			event.Time = time.Now().UTC().Add(time.Duration(len(db.Snapshot().Events)) * time.Millisecond)
+			event.Time = time.Now().UTC().Add(time.Duration(len(beforeData.Events)+index) * time.Millisecond)
 			event.ID = req.RunID + "-" + event.ID
 			if _, err := processEvent(db, event); err != nil {
 				http.Error(w, "could not persist simulation event", http.StatusInternalServerError)
 				return
 			}
 		}
-		d := db.Snapshot()
+		d, ok := readData(w, db)
+		if !ok {
+			return
+		}
 		actual := map[string]bool{}
 		for _, a := range d.Alerts {
 			if a.SimulationRunID == req.RunID {
@@ -270,7 +322,7 @@ func routes(db *store.Store, token string) http.Handler {
 	return mux
 }
 
-func process(w http.ResponseWriter, db *store.Store, e model.Event) {
+func process(w http.ResponseWriter, db store.Repository, e model.Event) {
 	a, err := processEvent(db, e)
 	if errors.Is(err, store.ErrDuplicateEvent) {
 		http.Error(w, "event ID already exists", http.StatusConflict)
@@ -282,7 +334,17 @@ func process(w http.ResponseWriter, db *store.Store, e model.Event) {
 	}
 	jsonOut(w, map[string]any{"accepted": true, "event_id": e.ID, "alerts": a})
 }
-func processEvent(db *store.Store, e model.Event) ([]model.Alert, error) {
+
+func readData(w http.ResponseWriter, db store.Repository) (store.Data, bool) {
+	data, err := db.ReadSnapshot()
+	if err != nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return store.Data{}, false
+	}
+	return data, true
+}
+
+func processEvent(db store.Repository, e model.Event) ([]model.Alert, error) {
 	e.IngestedAt = time.Now().UTC()
 	matches := detection.Match(e)
 	alerts := []model.Alert{}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/model"
@@ -10,6 +11,16 @@ import (
 )
 
 var ErrDuplicateEvent = errors.New("event ID already exists")
+
+type Repository interface {
+	ReadSnapshot() (Data, error)
+	UpdateAlert(id string, status, note, assignee *string) (model.Alert, bool, error)
+	UpdateIncident(id string, status, note *string) (model.Incident, bool, error)
+	RemoveSimulation(runID string) error
+	AddEvent(event model.Event, alerts []model.Alert) error
+	Ping(context.Context) error
+	Close()
+}
 
 type Data struct {
 	Events    []model.Event    `json:"events"`
@@ -34,7 +45,10 @@ func Open(path string) (*Store, error) {
 	}
 	return s, nil
 }
-func (s *Store) Snapshot() Data { s.mu.RLock(); defer s.mu.RUnlock(); return s.Data }
+func (s *Store) Snapshot() Data              { s.mu.RLock(); defer s.mu.RUnlock(); return s.Data }
+func (s *Store) ReadSnapshot() (Data, error) { return s.Snapshot(), nil }
+func (s *Store) Ping(context.Context) error  { return nil }
+func (s *Store) Close()                      {}
 
 func (s *Store) UpdateAlert(id string, status, note, assignee *string) (model.Alert, bool, error) {
 	s.mu.Lock()
