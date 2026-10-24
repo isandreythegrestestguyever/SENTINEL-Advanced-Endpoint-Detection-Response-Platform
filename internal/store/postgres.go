@@ -171,6 +171,38 @@ func loadJSONRows(ctx context.Context, pool *pgxpool.Pool, query string, appendR
 	return rows.Err()
 }
 
+func (s *PostgresStore) RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, `SELECT payload FROM events WHERE host_id=$1 AND simulation_run_id=$2 AND event_time >= $3 AND event_time <= $4 ORDER BY event_time DESC LIMIT $5`, event.HostID, event.SimulationRunID, event.Time.Add(-window), event.Time, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []model.Event
+	for rows.Next() {
+		var payload []byte
+		var item model.Event
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(payload, &item); err != nil {
+			return nil, err
+		}
+		events = append(events, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events, nil
+}
+
 func (s *PostgresStore) AddEvent(event model.Event, alerts []model.Alert) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

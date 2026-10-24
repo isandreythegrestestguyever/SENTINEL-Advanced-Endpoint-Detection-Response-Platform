@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/model"
+	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/simulator"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/store"
 )
 
@@ -84,6 +86,82 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 	if data := db.Snapshot(); len(data.Events) != 0 || len(data.Alerts) != 0 || len(data.Incidents) != 0 {
 		t.Fatalf("simulation reset left data behind: %#v", data)
+	}
+}
+
+func TestIngestTriggersBoundedAuthenticationCorrelation(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, "test-token"))
+	base := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
+	for index := 0; index < 3; index++ {
+		event := model.Event{ID: fmt.Sprintf("auth-%d", index), SchemaVersion: "1.0", Time: base.Add(time.Duration(index) * time.Minute), HostID: "auth-host", Hostname: "AUTH-HOST", Source: "test", Type: "authentication_failure", SimulationRunID: "auth-run"}
+		body, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := send(t, handler, http.MethodPost, "/api/ingest", body, "test-token")
+		if response.Code != http.StatusOK {
+			t.Fatalf("event %d ingest status = %d: %s", index+1, response.Code, response.Body.String())
+		}
+		var result struct {
+			Alerts []model.Alert `json:"alerts"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		if index < 2 && len(result.Alerts) != 0 {
+			t.Fatalf("event %d alerted before threshold: %#v", index+1, result.Alerts)
+		}
+		if index == 2 {
+			if len(result.Alerts) != 1 || result.Alerts[0].RuleID != "SEN-AUTH-003" || len(result.Alerts[0].EventIDs) != 3 {
+				t.Fatalf("third event produced unexpected alert: %#v", result.Alerts)
+			}
+		}
+	}
+}
+
+func TestAllScenarioExpectedRulesThroughHTTPPath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, "test-token"))
+	for _, scenario := range simulator.All() {
+		found := map[string]bool{}
+		runID := "http-" + scenario.ID
+		for _, fixture := range scenario.Events {
+			event := fixture
+			event.ID = runID + "-" + fixture.ID
+			event.SimulationRunID = runID
+			body, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := send(t, handler, http.MethodPost, "/api/ingest", body, "test-token")
+			if response.Code != http.StatusOK {
+				t.Fatalf("%s event %s ingest status = %d: %s", scenario.ID, fixture.ID, response.Code, response.Body.String())
+			}
+			var result struct {
+				Alerts []model.Alert `json:"alerts"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			for _, alert := range result.Alerts {
+				found[alert.RuleID] = true
+			}
+		}
+		for _, expected := range scenario.ExpectedRuleIDs {
+			if !found[expected] {
+				t.Errorf("%s did not produce %s through HTTP ingest", scenario.ID, expected)
+			}
+		}
+		if err := db.RemoveSimulation(runID); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

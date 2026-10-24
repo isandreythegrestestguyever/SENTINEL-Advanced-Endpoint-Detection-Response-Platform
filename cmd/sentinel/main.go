@@ -346,10 +346,15 @@ func readData(w http.ResponseWriter, db store.Repository) (store.Data, bool) {
 
 func processEvent(db store.Repository, e model.Event) ([]model.Alert, error) {
 	e.IngestedAt = time.Now().UTC()
-	matches := detection.Match(e)
+	previous, err := db.RecentEvents(e, 10*time.Minute, 500)
+	if err != nil {
+		return nil, err
+	}
+	matches := detection.Evaluate(e, previous)
 	alerts := []model.Alert{}
-	for _, rule := range matches {
-		alerts = append(alerts, model.Alert{ID: fmt.Sprintf("ALT-%s-%s", e.ID, rule.ID), RuleID: rule.ID, Title: rule.Title, Severity: rule.Severity, Confidence: rule.Confidence, Technique: rule.Technique, HostID: e.HostID, Hostname: e.Hostname, EventIDs: []string{e.ID}, Evidence: fmt.Sprintf("%s matched %s containing %q", rule.Field, rule.ID, rule.Contains), CreatedAt: time.Now().UTC(), SimulationRunID: e.SimulationRunID, Status: "open"})
+	for _, finding := range matches {
+		rule := finding.Rule
+		alerts = append(alerts, model.Alert{ID: fmt.Sprintf("ALT-%s-%s", e.ID, rule.ID), RuleID: rule.ID, Title: rule.Title, Severity: rule.Severity, Confidence: rule.Confidence, Technique: rule.Technique, HostID: e.HostID, Hostname: e.Hostname, EventIDs: finding.EventIDs, Evidence: finding.Evidence, CreatedAt: time.Now().UTC(), SimulationRunID: e.SimulationRunID, Status: "open"})
 	}
 	if err := db.AddEvent(e, alerts); err != nil {
 		return nil, err

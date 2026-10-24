@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/model"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ var ErrDuplicateEvent = errors.New("event ID already exists")
 
 type Repository interface {
 	ReadSnapshot() (Data, error)
+	RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error)
 	UpdateAlert(id string, status, note, assignee *string) (model.Alert, bool, error)
 	UpdateIncident(id string, status, note *string) (model.Incident, bool, error)
 	RemoveSimulation(runID string) error
@@ -49,6 +51,23 @@ func (s *Store) Snapshot() Data              { s.mu.RLock(); defer s.mu.RUnlock(
 func (s *Store) ReadSnapshot() (Data, error) { return s.Snapshot(), nil }
 func (s *Store) Ping(context.Context) error  { return nil }
 func (s *Store) Close()                      {}
+
+func (s *Store) RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	start := event.Time.Add(-window)
+	var matches []model.Event
+	for _, candidate := range s.Events {
+		if candidate.HostID == event.HostID && candidate.SimulationRunID == event.SimulationRunID && !candidate.Time.Before(start) && !candidate.Time.After(event.Time) {
+			matches = append(matches, candidate)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Time.Before(matches[j].Time) })
+	if limit > 0 && len(matches) > limit {
+		matches = matches[len(matches)-limit:]
+	}
+	return matches, nil
+}
 
 func (s *Store) UpdateAlert(id string, status, note, assignee *string) (model.Alert, bool, error) {
 	s.mu.Lock()

@@ -35,6 +35,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 
 - Versioned Sentinel event envelope (`schema_version: 1.0`) with source, host, timestamp, process metadata, destination, ATT&CK label, and simulation provenance.
 - Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
+- Bounded count correlations for repeated authentication failures, file modifications, and same-destination network activity; correlated alerts include every supporting event ID.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
@@ -72,7 +73,7 @@ The current source has been checked with `go test ./...`, `go vet ./...`, and `n
 
 ## Roadmap
 
-The next major engineering slices are a Windows Rust service using documented event providers; multi-event temporal correlation; authenticated endpoint enrollment and secure transport; and broader browser end-to-end tests. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+The next major engineering slices are a Windows Rust service using documented event providers; authenticated endpoint enrollment and secure transport; analyst RBAC; broader browser end-to-end tests; and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

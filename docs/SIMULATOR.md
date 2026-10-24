@@ -23,7 +23,7 @@ The current dataset has a fixed time seed and no random number generation. Repla
 | S05 | Suspicious network beaconing | `SEN-NET-006` |
 | S06 | Multi-stage intrusion | `SEN-EXEC-001`, `SEN-PERSIST-005`, `SEN-NET-006` |
 
-These exercise labels describe synthetic telemetry only. Current rule matches are independent single-event conditions. For example, repeated authentication rows each match the same rule; they do not prove a temporal sequence detector exists.
+These exercise labels describe synthetic telemetry only. Authentication, file-change, and network fixtures reach configured count thresholds inside their event-time windows; the resulting alerts include the contributing event IDs. The remaining current rules match individual events. Fixture success verifies these declared cases only.
 
 ## GitHub Pages preview
 

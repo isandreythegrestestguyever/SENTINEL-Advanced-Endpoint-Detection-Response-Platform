@@ -20,7 +20,7 @@ flowchart LR
 ## Current components
 
 - `internal/model`: Sentinel schema `1.0` events, alerts, incidents, and derived endpoint records. The schema borrows concepts from OCSF but is not conformant.
-- `internal/detection`: six enabled, revisioned rules, each matching a single field with a case-insensitive substring condition.
+- `internal/detection`: six enabled, revisioned rules using case-insensitive field conditions; three also correlate bounded event counts by host/run and, for network activity, destination.
 - `internal/simulator`: six fictional fixtures with declared expected rule IDs. It performs no host activity.
 - `internal/store`: repository interface; mutex-protected JSON development store; PostgreSQL implementation using pgx, embedded versioned SQL migrations, indexes, transactional event/alert/case/audit writes, and normalized evidence links.
 - `cmd/sentinel`: validation, bearer-token checks on writes, API routes, response headers, request limits, local listener, optional HTTPS, and backend selection.
@@ -32,4 +32,4 @@ GitHub Pages cannot run the Go service. The workflow exports scenario and rule f
 
 ## Deliberate limitations
 
-There is no Rust sensor, endpoint enrollment, heartbeat, event pagination, live push channel, multi-user account model, RBAC, mTLS, rate limiting, temporal correlation engine, Sigma parser, YARA scanning, or response action. Read API routes are unauthenticated. PostgreSQL support is real but has not been exercised against the developer's local daemon; CI runs integration tests against a PostgreSQL service. JSON mode is unsuitable for concurrent service replicas, large datasets, or production retention needs. Keep the listener on loopback. HTTPS only encrypts the connection when configured; it does not provide endpoint identity.
+There is no Rust sensor, endpoint enrollment, heartbeat, event pagination, live push channel, multi-user account model, RBAC, mTLS, rate limiting, general-purpose correlation language, Sigma parser, YARA scanning, or response action. Read API routes are unauthenticated. PostgreSQL support is exercised in CI against a PostgreSQL service but not against a local daemon here. JSON mode is unsuitable for concurrent service replicas, large datasets, or production retention needs. Keep the listener on loopback. HTTPS only encrypts the connection when configured; it does not provide endpoint identity.

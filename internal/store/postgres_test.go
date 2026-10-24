@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/detection"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/model"
 )
 
@@ -59,6 +60,28 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 	updatedIncident, found, err := db.UpdateIncident(incident.ID, &incidentStatus, &incidentNote)
 	if err != nil || !found || updatedIncident.Status != incidentStatus || updatedIncident.AnalystNotes != incidentNote {
 		t.Fatalf("PostgreSQL incident update = %#v, found=%v, err=%v", updatedIncident, found, err)
+	}
+	for index := 0; index < 3; index++ {
+		correlationEvent := model.Event{ID: fmt.Sprintf("%s-auth-%d", suffix, index), SchemaVersion: "1.0", Time: now.Add(time.Duration(index+1) * time.Minute), HostID: event.HostID, Hostname: event.Hostname, Source: "integration-test", Type: "authentication_failure", SimulationRunID: runID}
+		previous, err := db.RecentEvents(correlationEvent, 5*time.Minute, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings := detection.Evaluate(correlationEvent, previous)
+		var alerts []model.Alert
+		if index < 2 && len(findings) != 0 {
+			t.Fatalf("PostgreSQL correlation fired before threshold at event %d: %#v", index+1, findings)
+		}
+		if index == 2 {
+			if len(findings) != 1 || findings[0].Rule.ID != "SEN-AUTH-003" || len(findings[0].EventIDs) != 3 {
+				t.Fatalf("PostgreSQL correlation finding = %#v", findings)
+			}
+			finding := findings[0]
+			alerts = append(alerts, model.Alert{ID: "correlation-alert-" + suffix, RuleID: finding.Rule.ID, Title: finding.Rule.Title, Severity: finding.Rule.Severity, Confidence: finding.Rule.Confidence, Technique: finding.Rule.Technique, HostID: event.HostID, Hostname: event.Hostname, EventIDs: finding.EventIDs, Evidence: finding.Evidence, CreatedAt: correlationEvent.Time, SimulationRunID: runID, Status: "open"})
+		}
+		if err := db.AddEvent(correlationEvent, alerts); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.RemoveSimulation(runID); err != nil {
 		t.Fatal(err)
