@@ -43,5 +43,7 @@ jobs:
     steps:
       - id: configure
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - id: deployment
         uses: actions/deploy-pages@v4
