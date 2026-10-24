@@ -32,6 +32,16 @@ func main() {
 		token = hex.EncodeToString(b)
 		log.Printf("Temporary analyst token (set SENTINEL_ADMIN_TOKEN to persist): %s", token)
 	}
+	mux := routes(db, token)
+	addr := env("SENTINEL_ADDR", "127.0.0.1:8080")
+	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	log.Printf("SENTINEL listening on http://%s", addr)
+	if cert, key := os.Getenv("SENTINEL_TLS_CERT"), os.Getenv("SENTINEL_TLS_KEY"); cert != "" && key != "" {
+		log.Fatal(server.ListenAndServeTLS(cert, key))
+	}
+	log.Fatal(server.ListenAndServe())
+}
+func routes(db *store.Store, token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, map[string]any{"status": "ok", "mode": "local-development", "schema_version": "1.0"})
@@ -257,14 +267,9 @@ func main() {
 		jsonOut(w, report)
 	})
 	mux.Handle("/", http.FileServer(http.Dir("web")))
-	addr := env("SENTINEL_ADDR", "127.0.0.1:8080")
-	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	log.Printf("SENTINEL listening on http://%s", addr)
-	if cert, key := os.Getenv("SENTINEL_TLS_CERT"), os.Getenv("SENTINEL_TLS_KEY"); cert != "" && key != "" {
-		log.Fatal(server.ListenAndServeTLS(cert, key))
-	}
-	log.Fatal(server.ListenAndServe())
+	return mux
 }
+
 func process(w http.ResponseWriter, db *store.Store, e model.Event) {
 	a, err := processEvent(db, e)
 	if errors.Is(err, store.ErrDuplicateEvent) {

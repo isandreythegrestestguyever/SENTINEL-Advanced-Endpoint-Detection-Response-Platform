@@ -11,7 +11,7 @@ go vet ./...
 node --check web/app.js
 ```
 
-The Go suite asserts expected detections for all six deterministic scenarios and tests JSON store persistence, analyst updates, simulation cleanup, and duplicate event rejection. `go vet` checks the Go packages. `node --check` only parses the browser script; it does not exercise DOM behavior.
+The Go suite asserts expected detections for all six deterministic scenarios, tests JSON store persistence and cleanup, and exercises authenticated HTTP routes with `httptest` for ingest, duplicate rejection, alert/incident updates, and simulation reset. `go vet` checks the Go packages. `node --check` only parses the browser script; it does not exercise DOM behavior.
 
 ## Manual backend smoke path
 
@@ -23,8 +23,8 @@ The Go suite asserts expected detections for all six deterministic scenarios and
 6. Restart with the same `SENTINEL_DB` and confirm non-reset data persists.
 7. Verify an unauthenticated write is rejected and malformed/oversized events are rejected.
 
-Automated API integration tests and browser end-to-end tests are not currently included. A local port bind was unavailable in this restricted environment, so the server smoke path was not run here. Windows sensor compilation/integration, Postgres migration checks, load/latency tests, dependency scanning, and production security review are unsupported because those components are not implemented.
+Browser end-to-end tests are not currently included. A local port bind was unavailable in this restricted environment, so the standalone server smoke path was not run here. Windows sensor compilation/integration, Postgres migration checks, load/latency tests, dependency scanning, and production security review are unsupported because those components are not implemented.
 
 ## Current run results
 
-On 2026-10-25, `go test ./...` passed, `go vet ./...` passed, and `node --check web/app.js` passed using Go 1.26.4 and Node 26.7.0. A local listener attempt was blocked by the environment's network permission (`bind: operation not permitted`); this is not evidence of a server runtime failure. No Windows, database, performance, or production-readiness claim is made.
+On 2026-10-25, `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, and `node --check web/app.js` passed using Go 1.26.4 and Node 26.7.0. The standalone local listener attempt was blocked by the environment's network permission (`bind: operation not permitted`); the same HTTP handlers were exercised in-process through `httptest`. The published browser demo was manually opened and S01 and S06 replayed successfully; reset and alert evidence views were also checked. No Windows, database, performance, or production-readiness claim is made.
