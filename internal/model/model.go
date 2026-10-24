@@ -38,6 +38,8 @@ type Alert struct {
 	CreatedAt       time.Time `json:"created_at"`
 	SimulationRunID string    `json:"simulation_run_id,omitempty"`
 	Status          string    `json:"status"`
+	AnalystNotes    string    `json:"analyst_notes,omitempty"`
+	Assignee        string    `json:"assignee,omitempty"`
 }
 
 type Incident struct {
@@ -49,6 +51,7 @@ type Incident struct {
 	AlertIDs        []string  `json:"alert_ids"`
 	SimulationRunID string    `json:"simulation_run_id,omitempty"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	AnalystNotes    string    `json:"analyst_notes,omitempty"`
 }
 
 type Endpoint struct {

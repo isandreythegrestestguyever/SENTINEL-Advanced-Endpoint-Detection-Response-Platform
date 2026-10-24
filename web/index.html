@@ -1,12 +1,39 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SENTINEL // Security Operations</title><link rel="stylesheet" href="style.css"></head>
-<body><aside class="rail"><div class="brand">S<span>·</span></div><nav><a class="active" href="#overview">OV</a><a href="#alerts">AL</a><a href="#fleet">EP</a><a href="#range">RG</a><a href="#rules">RL</a></nav><div class="rail-foot">v0.1</div></aside>
-<main><header><div><p class="eyebrow">SENTINEL / SECURITY OPERATIONS</p><h1>Command overview</h1></div><div class="top-right"><span class="live"><i></i> LOCAL DEVELOPMENT</span><button id="tokenBtn">SET ANALYST TOKEN</button></div></header>
-<div class="notice"><b>SIMULATION / LIVE BOUNDARY</b><span>This instance has no live endpoint sensors. Replay records are labeled and isolated by run ID.</span></div>
-<section id="overview"><div class="metrics"><article><label>MONITORED ENDPOINTS</label><strong id="endpoints">0</strong><small>Observed live telemetry</small></article><article><label>CONNECTED SENSORS</label><strong id="sensors">0</strong><small>Windows agent not configured</small></article><article><label>OPEN INCIDENTS</label><strong id="incidents">0</strong><small>Live namespace only</small></article><article><label>EVENTS PROCESSED</label><strong id="events">0</strong><small id="mode">Awaiting telemetry</small></article></div></section>
-<section class="grid"><article class="panel wide"><div class="panel-head"><div><p class="eyebrow">01 / DETECTION FEED</p><h2>Recent alerts</h2></div><button class="quiet" id="refresh">REFRESH ↻</button></div><div class="table-wrap"><table><thead><tr><th>SEVERITY</th><th>DETECTION</th><th>ENDPOINT</th><th>TIME / RUN</th><th>STATUS</th></tr></thead><tbody id="alerts"><tr><td colspan="5" class="empty">No alerts. Run a scenario in Sentinel Range.</td></tr></tbody></table></div></article>
-<article class="panel"><div class="panel-head"><div><p class="eyebrow">02 / VALIDATION</p><h2>Sentinel Range</h2></div><span class="tag">SAFE REPLAY</span></div><p class="muted">Deterministic, fictional telemetry passes through the same API and detection engine as ingested events.</p><label class="field-label" for="scenario">SCENARIO</label><select id="scenario"></select><button class="primary" id="run">RUN REPLAY <span>→</span></button><div id="result" class="result">Choose a scenario to view expected detections and results.</div></article>
-<article class="panel"><div class="panel-head"><div><p class="eyebrow">03 / FLEET</p><h2>Sensor health</h2></div></div><div class="health"><span class="health-dot"></span><div><b>No active sensors</b><small>Windows collector source is planned, not verified on this host.</small></div></div><div class="coverage"><span>Replay detection rules</span><b>6</b></div><div class="coverage"><span>Windows event sources</span><b>0</b></div></article>
-<article class="panel wide" id="rules"><div class="panel-head"><div><p class="eyebrow">04 / ENGINE</p><h2>Enabled detection rules</h2></div><span class="tag">RULE SET 1</span></div><div id="rulesList" class="rules"></div></article></section>
-<footer><span>SENTINEL // EVIDENCE OVER APPEARANCE</span><span>LOCAL FILE STORE · SIMULATION LABELING ENFORCED</span></footer></main><script src="app.js"></script></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0f10">
+  <title>SENTINEL | Endpoint Detection & Response</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="Sentinel command overview"><span class="brand-mark">S</span><span class="brand-name">SENTINEL<small>DEFENSE SYSTEMS</small></span></a>
+    <div class="side-status"><i></i><span>LOCAL CONTROL PLANE</span></div>
+    <nav aria-label="Primary navigation">
+      <p class="nav-label">OPERATIONS</p>
+      <button class="nav-item selected" data-view="overview"><span class="nav-glyph">⌂</span>Command overview</button>
+      <button class="nav-item" data-view="fleet"><span class="nav-glyph">▦</span>Endpoint fleet <small id="fleet-count">0</small></button>
+      <button class="nav-item" data-view="detections"><span class="nav-glyph">◎</span>Threat detections <small id="alert-count">0</small></button>
+      <button class="nav-item" data-view="processes"><span class="nav-glyph">⌘</span>Process investigator</button>
+      <button class="nav-item" data-view="network"><span class="nav-glyph">⌁</span>Network activity</button>
+      <button class="nav-item" data-view="incidents"><span class="nav-glyph">▤</span>Incident cases <small id="incident-count">0</small></button>
+      <p class="nav-label nav-label-lower">ENGINEERING</p>
+      <button class="nav-item" data-view="rules"><span class="nav-glyph">≋</span>Detection rulebook</button>
+      <button class="nav-item" data-view="audit"><span class="nav-glyph">◷</span>Security audit</button>
+      <button class="nav-item" data-view="range"><span class="nav-glyph">▸</span>Sentinel Range <span class="nav-pulse"></span></button>
+    </nav>
+    <div class="sidebar-bottom"><div class="operator-chip"><span class="operator-avatar">A</span><span>LOCAL ANALYST<small id="operator-mode">DEMO MODE</small></span><button id="tokenBtn" title="Set analyst token" aria-label="Set analyst token">•••</button></div><div class="build-note">SENTINEL / RELEASE CANDIDATE<br>READ-ONLY SENSOR DESIGN</div></div>
+  </aside>
+
+  <main class="workspace">
+    <header class="topbar"><div class="breadcrumbs"><span>SECURITY OPERATIONS</span><b>/</b><strong id="crumb">COMMAND OVERVIEW</strong></div><div class="top-actions"><span class="mode-pill" id="mode-pill"><i></i> SIMULATION / LIVE BOUNDARY</span><span class="utc-clock" id="clock">UTC --:--:--</span><button class="icon-button" id="refresh" aria-label="Refresh data" title="Refresh data">↻</button></div></header>
+    <section class="boundary-banner"><span class="boundary-icon">!</span><div><strong id="boundary-title">NO LIVE SENSORS CONNECTED</strong><span id="boundary-copy">This instance contains no Windows sensor. Replay telemetry is synthetic, labeled, and isolated by run ID.</span></div><button data-nav="range" class="banner-action">OPEN SENTINEL RANGE <span>→</span></button></section>
+    <div id="view-root" aria-live="polite"></div>
+    <footer class="footer"><span>SENTINEL / EVIDENCE OVER APPEARANCE</span><span>LOCAL FILE STORE <b>·</b> SIMULATION LABELING ENFORCED</span></footer>
+  </main>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

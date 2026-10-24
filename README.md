@@ -2,89 +2,73 @@
 
 **A local-first endpoint telemetry and detection workbench with a safe replay lab.**
 
-When GitHub Pages deployment is enabled, the browser-only demo is published at `https://isandreythegrestestguyever.github.io/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/`.
+[Open the GitHub Pages demo](https://isandreythegrestestguyever.github.io/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/)
 
-SENTINEL is an early functional security engineering release. Its Go service accepts normalized event envelopes, evaluates enabled rules, writes evidence and alerts to a local JSON store, groups related alerts into incidents, and serves a compact SOC dashboard. Six deterministic fictional scenarios enter through the same event-processing function as the ingest API. Replay data carries a run ID and remains separated from live metrics.
+SENTINEL is an early, functional security engineering project. The Go service accepts normalized event records, evaluates a small explainable rule set, persists matching evidence, creates host-and-run incident groups, and serves an analyst dashboard. Six deterministic fictional exercises feed events through the same ingest route and detection code used by submitted telemetry.
 
-> **Current limits:** This release has no Windows sensor and monitors no live endpoints. The local JSON store is for development and demonstrations, not multi-user or production use. Authentication is a single bearer token, not a user/RBAC system. HTTPS is available when certificates are supplied; mutual TLS is not implemented. Do not expose the service to an untrusted network.
+The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the page session. It has no service, sign-in, or persistent storage. Run the local Go service to exercise the backend event path and persistent analyst workflows.
 
-## Quick start
+> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, PostgreSQL database, multi-user authentication, RBAC, mTLS, or production deployment configuration. The local JSON store and shared bearer token are development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
-Requirements: Go 1.22 or newer. No external service or database is required.
+## Run locally
+
+Requirements: Go 1.24 or newer.
 
 ```sh
 go run ./cmd/sentinel
 ```
 
-Open <http://127.0.0.1:8080>. The server prints a temporary analyst token at startup. Choose **Set analyst token**, paste it, then run a replay. To use a stable local token, set `SENTINEL_ADMIN_TOKEN`. The token is needed for event ingestion and simulation actions.
+Open <http://127.0.0.1:8080>. Copy the temporary analyst token from the server output and choose **Set analyst token**. To use a stable development token, set `SENTINEL_ADMIN_TOKEN` before starting.
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `SENTINEL_ADDR` | `127.0.0.1:8080` | Listen address; loopback by default |
-| `SENTINEL_DB` | `sentinel-data.json` | Local persisted store path |
-| `SENTINEL_ADMIN_TOKEN` | Random per start | Token for write endpoints |
-| `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | When both are set, serve HTTPS |
+| `SENTINEL_DB` | `sentinel-data.json` | Local JSON persistence path |
+| `SENTINEL_ADMIN_TOKEN` | Random per start | Bearer token for write routes |
+| `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
+
+## What works
+
+- Versioned Sentinel event envelope (`schema_version: 1.0`) with source, host, timestamp, process metadata, destination, ATT&CK label, and simulation provenance.
+- Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
+- Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
+- Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
+- Incident queue, status and notes updates, evidence timeline, and JSON incident export.
+- Endpoint inventory derived from received events, process ancestry assembled only from available process IDs, network metadata view, detection catalog, and audit history.
+- Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, reset, result evaluation, and JSON report export.
+- Responsive dashboard with explicit live-submission versus simulated-data labeling.
 
 ## Event-to-alert path
 
-1. `POST /api/ingest` accepts a schema `1.0` event (maximum request body 1 MiB).
-2. The service validates fields, evaluates enabled rules, and records matching evidence.
-3. Events, alerts, audit entries, and grouped incidents are persisted to the local JSON file.
-4. The dashboard reads the API and displays stored values.
-5. `POST /api/simulate` sends scenario events through the same event-processing path and checks expected rule IDs.
+1. `POST /api/ingest` accepts a schema `1.0` event (maximum body 1 MiB).
+2. The service validates required fields and bounds, rejects duplicate event IDs, evaluates enabled rules, and stores evidence for matches.
+3. Events, alerts, host/run incident groups, and logical audit records are saved in the local JSON file.
+4. The dashboard reads actual local API data and sends analyst changes back to authenticated routes.
+5. Sentinel Range replays events individually through `POST /api/ingest`; it evaluates the actual returned alerts against each scenario's declared expected rule IDs.
 
-Example:
+Read routes: `/api/health`, `/api/overview`, `/api/events`, `/api/endpoints`, `/api/alerts`, `/api/incidents`, `/api/audit`, `/api/rules`, and `/api/scenarios`. Write routes require `Authorization: Bearer <token>`: `POST /api/ingest`, `POST /api/simulate`, `PATCH /api/alerts/{id}`, `PATCH /api/incidents/{id}`, and `DELETE /api/simulations/{run}`.
 
-```sh
-curl -sS http://127.0.0.1:8080/api/ingest \
-  -H 'Authorization: Bearer YOUR_LOCAL_TOKEN' -H 'Content-Type: application/json' \
-  -d '{"id":"demo-1","schema_version":"1.0","time":"2026-10-25T09:00:00Z","host_id":"host-1","hostname":"WORKSTATION-1","source":"example","category":"endpoint","type":"process_start","image":"C:\\Users\\Public\\Temp\\stage.exe"}'
-```
+## Repository guide
 
-Read-only API routes: `/api/health`, `/api/overview`, `/api/events`, `/api/alerts`, `/api/incidents`, `/api/audit`, `/api/rules`, `/api/scenarios`. Mutating routes require the bearer token. Read routes are unauthenticated in this development build; keep the listener on loopback.
+- `cmd/sentinel`: local Go HTTP service.
+- `cmd/export-demo`: exports scenario and rule definitions for Pages.
+- `internal/model`: versioned Sentinel event, alert, incident, and endpoint types.
+- `internal/detection`: native single-field rule matching.
+- `internal/simulator`: six deterministic synthetic scenario fixtures.
+- `internal/store`: mutex-protected JSON persistence.
+- `web`: static dashboard and browser-only Pages preview.
+- `docs`: architecture, detection, simulator, testing, and threat-model notes.
 
-## Architecture
+See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGINE.md), [simulator guide](docs/SIMULATOR.md), [testing](docs/TESTING.md), [threat model](docs/THREAT_MODEL.md), and [security policy](SECURITY.md).
 
-```mermaid
-flowchart LR
-  UI[Browser dashboard] -->|read API| API[Go HTTP service]
-  UI -->|tokened replay request| SIM[Replay scenarios]
-  SIM --> PIPE[Shared event processing]
-  SENSOR[Future Windows sensor] -. planned .->|tokened ingestion| API
-  API --> PIPE
-  PIPE --> RULES[Versioned rule set]
-  PIPE --> STORE[Local JSON store]
-  STORE --> API
-```
+## Verification
 
-See [architecture](docs/ARCHITECTURE.md), [threat model](docs/THREAT_MODEL.md), and the guides in `docs/`.
+The current source has been checked with `go test ./...`, `go vet ./...`, and `node --check web/app.js`. These checks cover Go unit tests and JavaScript syntax; they do not establish Windows sensor support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
 
-## Implemented scope
+## Roadmap
 
-- Versioned event envelope with timestamps, host, source, type, process metadata, destination, technique, and simulation provenance.
-- Six enabled explainable single-event rules, with severity, confidence, ATT&CK technique identifier, evidence text, and false-positive guidance.
-- Durable atomic file writes, alert evidence, local incident grouping, and logical audit records.
-- Payload size and field validation, loopback default, random startup token, HTTPS option, request timeouts, and browser security headers.
-- Six deterministic scenarios with mandatory rule assertions and downloadable JSON result reports.
-- Dashboard with overview, alert list, sensor boundary disclosure, rule inventory, scenario selection, replay, and results.
+The next major engineering slices are PostgreSQL with migrations and indexed queries; a Windows Rust service using documented event providers; multi-event temporal correlation; authenticated endpoint enrollment and secure transport; and broader API/browser integration tests. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
-The Pages demo is explicitly browser-only: the workflow exports scenario fixtures and rule definitions from the Go application, and the browser evaluates those same conditions locally for a preview. It has no backend, authentication, or persistent data; replay results last only for the open page session. Local Go mode sends replay events into the backend's event-processing and persistence path.
+## License
 
-The event shape borrows concepts from OCSF but is **not OCSF compliant**. Rule matching is a small native subset and has **no Sigma parser**. Correlation groups detections by host and simulation run; it does not detect temporal sequences. Precision/recall are scenario-specific checks against declared rule IDs, not calibrated quality measures.
-
-## Verification status
-
-Automated scenario assertion tests are included. Execution was blocked by this host's Go installation: `go test ./...` reported standard packages as “not in std” under `/opt/homebrew/Cellar/go/1.26.4/libexec/src`, although source directories exist. This does not establish whether the code compiles. Re-run with a working Go installation:
-
-```sh
-gofmt -w cmd internal
-go test ./...
-go vet ./...
-go run ./cmd/sentinel
-```
-
-See [testing notes](docs/TESTING.md). No benchmark, Windows build, browser automation, or runtime result is claimed.
-
-## Safety and license
-
-Replay scenarios create synthetic in-app records only. No malware, credentials, real connections, file changes, persistence modifications, or remote commands are performed. This is a local development utility, not hardened production EDR. See [SECURITY.md](SECURITY.md). Licensed Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).

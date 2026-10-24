@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/detection"
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/model"
@@ -52,9 +53,113 @@ func main() {
 		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": 0, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT · NO LIVE SENSORS"})
 	})
 	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Events) })
+	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
+		latest := map[string]model.Endpoint{}
+		for _, event := range db.Snapshot().Events {
+			seenAt := event.IngestedAt
+			if seenAt.IsZero() {
+				seenAt = event.Time
+			}
+			endpoint := latest[event.HostID]
+			if endpoint.HostID == "" || seenAt.After(endpoint.LastSeen) {
+				endpoint = model.Endpoint{HostID: event.HostID, Hostname: event.Hostname, OS: "Unknown", Status: "observed", LastSeen: seenAt, Simulated: event.SimulationRunID != ""}
+				if endpoint.Simulated {
+					endpoint.OS = "Windows (simulated)"
+					endpoint.Status = "simulation"
+				}
+				latest[event.HostID] = endpoint
+			}
+		}
+		endpoints := make([]model.Endpoint, 0, len(latest))
+		for _, endpoint := range latest {
+			endpoints = append(endpoints, endpoint)
+		}
+		jsonOut(w, endpoints)
+	})
 	mux.HandleFunc("/api/alerts", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Alerts) })
 	mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Incidents) })
 	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, db.Snapshot().Audit) })
+	mux.HandleFunc("PATCH /api/alerts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var update struct {
+			Status       *string `json:"status"`
+			AnalystNotes *string `json:"analyst_notes"`
+			Assignee     *string `json:"assignee"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&update); err != nil {
+			http.Error(w, "invalid update", http.StatusBadRequest)
+			return
+		}
+		if update.Status != nil && *update.Status != "open" && *update.Status != "acknowledged" && *update.Status != "closed" {
+			http.Error(w, "status must be open, acknowledged, or closed", http.StatusBadRequest)
+			return
+		}
+		if (update.AnalystNotes != nil && len(*update.AnalystNotes) > 4000) || (update.Assignee != nil && len(*update.Assignee) > 120) {
+			http.Error(w, "update field too long", http.StatusBadRequest)
+			return
+		}
+		alert, found, err := db.UpdateAlert(r.PathValue("id"), update.Status, update.AnalystNotes, update.Assignee)
+		if err != nil {
+			http.Error(w, "could not persist alert update", http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		jsonOut(w, alert)
+	})
+	mux.HandleFunc("PATCH /api/incidents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var update struct {
+			Status       *string `json:"status"`
+			AnalystNotes *string `json:"analyst_notes"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&update); err != nil {
+			http.Error(w, "invalid update", http.StatusBadRequest)
+			return
+		}
+		if update.Status != nil && *update.Status != "open" && *update.Status != "investigating" && *update.Status != "resolved" {
+			http.Error(w, "status must be open, investigating, or resolved", http.StatusBadRequest)
+			return
+		}
+		if update.AnalystNotes != nil && len(*update.AnalystNotes) > 4000 {
+			http.Error(w, "note too long", http.StatusBadRequest)
+			return
+		}
+		incident, found, err := db.UpdateIncident(r.PathValue("id"), update.Status, update.AnalystNotes)
+		if err != nil {
+			http.Error(w, "could not persist incident update", http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		jsonOut(w, incident)
+	})
+	mux.HandleFunc("DELETE /api/simulations/{run}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		runID := r.PathValue("run")
+		if runID == "" || len(runID) > 128 {
+			http.Error(w, "invalid run ID", http.StatusBadRequest)
+			return
+		}
+		if err := db.RemoveSimulation(runID); err != nil {
+			http.Error(w, "could not reset simulation", http.StatusInternalServerError)
+			return
+		}
+		jsonOut(w, map[string]any{"reset": true, "run_id": runID})
+	})
 	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, detection.Rules) })
 	mux.HandleFunc("/api/scenarios", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, simulator.All()) })
 	mux.HandleFunc("/api/ingest", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +220,10 @@ func main() {
 			event.SimulationRunID = req.RunID
 			event.Time = time.Now().UTC().Add(time.Duration(len(db.Snapshot().Events)) * time.Millisecond)
 			event.ID = req.RunID + "-" + event.ID
-			processEvent(db, event)
+			if _, err := processEvent(db, event); err != nil {
+				http.Error(w, "could not persist simulation event", http.StatusInternalServerError)
+				return
+			}
 		}
 		d := db.Snapshot()
 		actual := map[string]bool{}
@@ -158,10 +266,18 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 func process(w http.ResponseWriter, db *store.Store, e model.Event) {
-	a := processEvent(db, e)
+	a, err := processEvent(db, e)
+	if errors.Is(err, store.ErrDuplicateEvent) {
+		http.Error(w, "event ID already exists", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, "could not persist event", http.StatusInternalServerError)
+		return
+	}
 	jsonOut(w, map[string]any{"accepted": true, "event_id": e.ID, "alerts": a})
 }
-func processEvent(db *store.Store, e model.Event) []model.Alert {
+func processEvent(db *store.Store, e model.Event) ([]model.Alert, error) {
 	e.IngestedAt = time.Now().UTC()
 	matches := detection.Match(e)
 	alerts := []model.Alert{}
@@ -169,9 +285,9 @@ func processEvent(db *store.Store, e model.Event) []model.Alert {
 		alerts = append(alerts, model.Alert{ID: fmt.Sprintf("ALT-%s-%s", e.ID, rule.ID), RuleID: rule.ID, Title: rule.Title, Severity: rule.Severity, Confidence: rule.Confidence, Technique: rule.Technique, HostID: e.HostID, Hostname: e.Hostname, EventIDs: []string{e.ID}, Evidence: fmt.Sprintf("%s matched %s containing %q", rule.Field, rule.ID, rule.Contains), CreatedAt: time.Now().UTC(), SimulationRunID: e.SimulationRunID, Status: "open"})
 	}
 	if err := db.AddEvent(e, alerts); err != nil {
-		log.Printf("persist event: %v", err)
+		return nil, err
 	}
-	return alerts
+	return alerts, nil
 }
 func valid(e model.Event) string {
 	if e.ID == "" || e.HostID == "" || e.Hostname == "" || e.Type == "" || e.Source == "" {

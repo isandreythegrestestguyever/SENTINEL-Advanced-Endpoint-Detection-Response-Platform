@@ -1,13 +1,13 @@
 # Detection engine
 
-The engine evaluates six enabled rules in `internal/detection/engine.go`. Each checks one field for a case-insensitive substring. A match produces an alert with rule ID, severity, confidence, ATT&CK technique ID, event reference, and matching condition. Rules are illustrative and need tuning against real environments.
+The Go engine currently evaluates six enabled rules independently for each event in `internal/detection/engine.go`. Each rule checks one field for a case-insensitive substring. A match produces an alert with rule ID/revision metadata, severity, confidence metadata, ATT&CK identifier, event reference, and a textual explanation of the condition.
 
-| Field | Match type | Example |
+| Field | Match type | Example condition |
 |---|---|---|
 | `command_line` | case-insensitive contains | `encodedcommand` |
 | `image` | case-insensitive contains | `\\temp\\` |
 | `type` | case-insensitive contains | `authentication_failure`, `file_modified`, `startup_change`, `network_connection` |
 
-Rules have an ID, revision, title, description, severity, confidence, technique, false-positive note, enabled state, and condition. Editing and Sigma parsing are not implemented. There is no temporal sequence detection; repeated synthetic records independently match single-event rules. No general Sigma modifier, field mapping, or log-source support is claimed. See the [Sigma specification](https://sigmahq.io/sigma-specification/).
+The current six conditions are engineering fixtures, not validated behavioral detections. The confidence value is rule metadata and is not a probability. Scenario evaluation compares unique expected rule IDs to the actual alerts produced by that run; it reports missed/unexpected IDs and precision/recall when denominators are defined. A zero denominator returns `null`. These measurements represent fixture conformance only.
 
-Scenario evaluation checks expected rule IDs against alerts produced for that run. It reports missed and unexpected IDs plus recall and precision when denominators are defined. A zero denominator returns `null`. These are fixture conformance measures, not real-world quality estimates. The seed label documents deterministic fixture data; no random generator is used.
+There is no temporal correlation, Sigma parser, arbitrary rule authoring, field mapping, or broad log-source compatibility. Repeated events match independently. No universal Sigma compatibility claim is made; see the [Sigma specification](https://sigmahq.io/sigma-specification/).

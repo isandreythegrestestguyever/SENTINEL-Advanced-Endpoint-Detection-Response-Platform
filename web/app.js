@@ -1,127 +1,180 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { staticDemo: false, demo: null, events: [], alerts: [], incidents: [] };
+const state = {
+  view: 'overview', staticDemo: false, demo: null, endpoints: [], events: [],
+  alerts: [], incidents: [], rules: [], audit: [], scenarios: [], selectedAlert: null,
+  selectedIncident: null, selectedScenario: 'S01', run: null, timer: null, filters: {severity:'all',status:'all',query:''}
+};
 const token = () => localStorage.getItem('sentinel-token') || '';
+const byId = (rows, id) => rows.find((row) => row.id === id);
 
 async function api(path, options = {}) {
   if (state.staticDemo) return demoAPI(path, options);
   try {
     const response = await fetch(path, options);
-    if (!response.ok) throw new Error(await response.text());
-    return await response.json();
+    if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
+    return response.status === 204 ? null : response.json();
   } catch (error) {
-    // GitHub Pages cannot host the Go API. Fall back to a clearly labeled browser-only replay.
     if (!path.startsWith('api/')) throw error;
     state.staticDemo = true;
     state.demo = await fetch('demo-data.json').then((response) => {
       if (!response.ok) throw new Error('Static replay data is unavailable.');
       return response.json();
     });
-    $('.live').innerHTML = '<i></i> STATIC BROWSER DEMO';
+    $('#operator-mode').textContent = 'BROWSER DEMO';
     $('#tokenBtn').hidden = true;
+    $('#mode-pill').innerHTML = '<i></i> STATIC REPLAY';
     return demoAPI(path, options);
   }
 }
 
-function demoAPI(path, options) {
+function demoAPI(path, options = {}) {
   if (path === 'api/scenarios') return Promise.resolve(state.demo.scenarios);
   if (path === 'api/rules') return Promise.resolve(state.demo.rules);
-  if (path === 'api/health') return Promise.resolve({ status: 'ok', mode: 'static-browser-demo' });
+  if (path === 'api/health') return Promise.resolve({status:'ok',mode:'static-browser-demo'});
   if (path === 'api/events') return Promise.resolve(state.events);
+  if (path === 'api/endpoints') return Promise.resolve(buildEndpoints(state.events));
   if (path === 'api/alerts') return Promise.resolve(state.alerts);
   if (path === 'api/incidents') return Promise.resolve(state.incidents);
-  if (path === 'api/audit') return Promise.resolve([]);
+  if (path === 'api/audit') return Promise.resolve(state.audit);
   if (path === 'api/overview') return Promise.resolve({
-    monitored_endpoints: 0, connected_sensors: 0, open_incidents: 0,
-    events: state.events.length, alerts: state.alerts.length,
-    mode: 'STATIC BROWSER DEMO · SESSION DATA ONLY'
+    monitored_endpoints: new Set(state.events.filter((event) => !event.simulation_run_id).map((event) => event.host_id)).size,
+    connected_sensors: 0, open_incidents: state.incidents.filter((item) => item.status === 'open' && !item.simulation_run_id).length,
+    events: state.events.length, alerts: state.alerts.length, mode: 'STATIC BROWSER DEMO · SESSION DATA ONLY'
   });
-  if (path === 'api/simulate' && options.method === 'POST') {
-    const request = JSON.parse(options.body);
-    const scenario = state.demo.scenarios.find((item) => item.id === request.scenario_id);
-    if (!scenario) throw new Error('Unknown scenario.');
-    const runID = `STATIC-${Date.now()}`;
-    const alerts = [];
-    const events = scenario.events.map((event) => ({ ...event, id: `${runID}-${event.id}`, simulation_run_id: runID }));
-    for (const event of events) {
-      state.events.push(event);
-      for (const rule of state.demo.rules) {
-        if (!rule.enabled) continue;
-        const value = event[rule.field] || '';
-        if (value.toLowerCase().includes(rule.contains.toLowerCase())) {
-          alerts.push({
-            id: `ALT-${event.id}-${rule.id}`, rule_id: rule.id, title: rule.title,
-            severity: rule.severity, confidence: rule.confidence, technique: rule.technique,
-            host_id: event.host_id, hostname: event.hostname, event_ids: [event.id],
-            evidence: `${rule.field} matched ${rule.id} containing "${rule.contains}"`,
-            created_at: new Date().toISOString(), simulation_run_id: runID, status: 'open'
-          });
-        }
-      }
-    }
+  if (path === 'api/ingest' && options.method === 'POST') {
+    const event = JSON.parse(options.body);
+    event.ingested_at = new Date().toISOString();
+    state.events.push(event);
+    const matched = state.demo.rules.filter((rule) => rule.enabled && String(event[rule.field] || '').toLowerCase().includes(rule.contains.toLowerCase()));
+    const alerts = matched.map((rule) => ({
+      id:`ALT-${event.id}-${rule.id}`,rule_id:rule.id,title:rule.title,severity:rule.severity,
+      confidence:rule.confidence,technique:rule.technique,host_id:event.host_id,hostname:event.hostname,
+      event_ids:[event.id],evidence:`${rule.field} matched ${rule.id} containing "${rule.contains}"`,
+      created_at:new Date().toISOString(),simulation_run_id:event.simulation_run_id||'',status:'open'
+    }));
     state.alerts.push(...alerts);
-    const matched = new Set(alerts.map((alert) => alert.rule_id));
-    const detected = scenario.expected_rule_ids.filter((id) => matched.has(id));
-    const missed = scenario.expected_rule_ids.filter((id) => !matched.has(id));
-    const unexpected = [...new Set(alerts.map((alert) => alert.rule_id))].filter((id) => !scenario.expected_rule_ids.includes(id));
-    return Promise.resolve({
-      scenario: scenario.name, scenario_id: scenario.id, scenario_version: '1.0',
-      dataset_version: '1.0', rule_set_version: '1', simulation_seed: 'deterministic-fixture-v1',
-      run_id: runID, event_count: events.length, expected_alerts: scenario.expected_rule_ids,
-      detected, missed, unexpected, success: missed.length === 0,
-      precision: detected.length + unexpected.length ? detected.length / (detected.length + unexpected.length) : null,
-      recall: scenario.expected_rule_ids.length ? detected.length / scenario.expected_rule_ids.length : null,
-      errors: [], alert_count: alerts.length
-    });
+    for (const alert of alerts) {
+      let incident=state.incidents.find((item)=>item.host_id===alert.host_id&&item.simulation_run_id===alert.simulation_run_id&&item.status==='open');
+      if (!incident) {incident={id:`INC-${alert.id}`,host_id:alert.host_id,hostname:alert.hostname,severity:alert.severity,status:'open',alert_ids:[],simulation_run_id:alert.simulation_run_id,updated_at:new Date().toISOString()};state.incidents.push(incident)}
+      incident.alert_ids.push(alert.id);incident.updated_at=new Date().toISOString();
+    }
+    state.audit.unshift({action:'event.ingested',event_id:event.id,time:new Date().toISOString()});
+    return Promise.resolve({accepted:true,event_id:event.id,alerts});
   }
-  return Promise.reject(new Error('This endpoint is unavailable in the static browser demo.'));
+  if (path.startsWith('api/alerts/') && options.method === 'PATCH') {
+    const item=byId(state.alerts,decodeURIComponent(path.split('/').pop())); if(!item)throw new Error('Alert not found');
+    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes?{analyst_notes:patch.analyst_notes}:{},patch.assignee?{assignee:patch.assignee}:{},patch.status?{status:patch.status}:{});
+    state.audit.unshift({action:'alert.updated',alert_id:item.id,status:item.status,time:new Date().toISOString()});return Promise.resolve(item);
+  }
+  if (path.startsWith('api/incidents/') && options.method === 'PATCH') {
+    const item=byId(state.incidents,decodeURIComponent(path.split('/').pop()));if(!item)throw new Error('Incident not found');
+    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes?{analyst_notes:patch.analyst_notes}:{},patch.status?{status:patch.status}:{});item.updated_at=new Date().toISOString();
+    state.audit.unshift({action:'incident.updated',incident_id:item.id,status:item.status,time:new Date().toISOString()});return Promise.resolve(item);
+  }
+  if (path.startsWith('api/simulations/') && options.method === 'DELETE') {
+    const runID=decodeURIComponent(path.split('/').pop());state.events=state.events.filter((row)=>row.simulation_run_id!==runID);state.alerts=state.alerts.filter((row)=>row.simulation_run_id!==runID);state.incidents=state.incidents.filter((row)=>row.simulation_run_id!==runID);state.audit.unshift({action:'simulation.reset',run_id:runID,time:new Date().toISOString()});return Promise.resolve({reset:true,run_id:runID});
+  }
+  return Promise.reject(new Error('This operation is unavailable in the static browser preview.'));
 }
 
-async function refresh() {
-  try {
-    const [overview, alerts, rules] = await Promise.all([api('api/overview'), api('api/alerts'), api('api/rules')]);
-    $('#endpoints').textContent = overview.monitored_endpoints;
-    $('#sensors').textContent = overview.connected_sensors;
-    $('#incidents').textContent = overview.open_incidents;
-    $('#events').textContent = overview.events;
-    $('#mode').textContent = overview.mode;
-    $('#alerts').innerHTML = alerts.length ? alerts.slice().reverse().slice(0, 30).map((alert) => `<tr><td><span class="severity ${esc(alert.severity)}">${esc(alert.severity)}</span></td><td><b>${esc(alert.title)}</b><br><small>${esc(alert.rule_id)} · ${esc(alert.technique || '—')}</small></td><td>${esc(alert.hostname)}</td><td><span class="simulation">${state.staticDemo ? 'STATIC DEMO' : 'SIM'} · ${esc(alert.simulation_run_id)}</span></td><td>${esc(alert.status)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No alerts. Run a scenario in Sentinel Range.</td></tr>';
-    $('#rulesList').innerHTML = rules.map((rule) => `<div class="rule"><b>${esc(rule.title)}</b><code>${esc(rule.id)}</code><small>${esc(rule.description)} · ${esc(rule.severity)} · ${esc(rule.technique)}</small></div>`).join('');
-  } catch (error) { $('#mode').textContent = 'API unavailable'; console.error(error); }
+function buildEndpoints(events) {
+  const map=new Map();
+  for(const event of events){const item=map.get(event.host_id);const time=event.ingested_at||event.time;if(!item||time>item.last_seen)map.set(event.host_id,{host_id:event.host_id,hostname:event.hostname,os:event.simulation_run_id?'Windows (simulated)':'Unknown',status:event.simulation_run_id?'simulation':'observed',last_seen:time,simulated:!!event.simulation_run_id})}
+  return [...map.values()];
 }
 
-async function loadScenarios() {
-  try {
-    const scenarios = await api('api/scenarios');
-    $('#scenario').innerHTML = scenarios.map((scenario) => `<option value="${esc(scenario.id)}">${esc(scenario.id)} — ${esc(scenario.name)}</option>`).join('');
-  } catch (error) { console.error(error); }
+async function refreshData() {
+  const [overview,endpoints,events,alerts,incidents,rules,audit,scenarios]=await Promise.all([
+    api('api/overview'),api('api/endpoints'),api('api/events'),api('api/alerts'),api('api/incidents'),api('api/rules'),api('api/audit'),api('api/scenarios')
+  ]);
+  Object.assign(state,{overview,endpoints,events,alerts,incidents,rules,audit,scenarios});
+  $('#fleet-count').textContent=endpoints.length;$('#alert-count').textContent=alerts.filter((a)=>a.status==='open').length;$('#incident-count').textContent=incidents.filter((i)=>i.status!=='resolved').length;
+  $('#boundary-title').textContent=endpoints.some((e)=>!e.simulated)?'LIVE HOST TELEMETRY RECEIVED':'NO LIVE SENSORS CONNECTED';
+  $('#boundary-copy').textContent=endpoints.some((e)=>!e.simulated)?'Observed events are stored separately from replay runs. This build has no response actions.':'This instance contains no Windows sensor. Replay telemetry is synthetic, labeled, and isolated by run ID.';
+  $('#side-status span').textContent=state.staticDemo?'STATIC DEMO':'LOCAL CONTROL PLANE';
+  render();
 }
 
-$('#tokenBtn').onclick = () => {
-  const value = prompt('Paste the analyst token printed when the local server started. It stays in this browser.');
-  if (value) { localStorage.setItem('sentinel-token', value.trim()); $('#tokenBtn').textContent = 'TOKEN SAVED'; }
-};
-$('#run').onclick = async () => {
-  if (!state.staticDemo && !token()) { alert('Set analyst token first. Find it in the server terminal.'); return; }
-  $('#run').disabled = true;
-  $('#result').textContent = 'Replaying normalized events through the detection rules…';
-  try {
-    const report = await api('api/simulate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token()}` },
-      body: JSON.stringify({ scenario_id: $('#scenario').value })
-    });
-    $('#result').innerHTML = `<b class="${report.success ? 'ok' : 'bad'}">${report.success ? 'SCENARIO PASSED' : 'SCENARIO FAILED'}</b><br>${report.event_count} events · ${report.detected.length}/${report.expected_alerts.length} expected rules detected<br>Recall: ${report.recall === null ? 'undefined' : Math.round(report.recall * 100) + '%'} · Precision: ${report.precision === null ? 'undefined' : Math.round(report.precision * 100) + '%'}<br>Run ${esc(report.run_id)}<br>${report.missed.length ? 'Missed: ' + esc(report.missed.join(', ')) : 'All mandatory assertions met.'}<br><button id="report">EXPORT JSON REPORT</button>`;
-    $('#report').onclick = () => download(report);
-    await refresh();
-  } catch (error) { $('#result').innerHTML = `<span class="bad">${esc(error.message)}</span>`; }
-  finally { $('#run').disabled = false; }
-};
-$('#refresh').onclick = refresh;
-function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
-function download(report) {
-  const anchor = document.createElement('a');
-  anchor.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
-  anchor.download = `sentinel-${report.run_id}.json`; anchor.click(); URL.revokeObjectURL(anchor.href);
+const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime=(value)=>{if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':date.toLocaleString(undefined,{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})};
+const sevClass=(value)=>`severity-tag ${esc(String(value||'').toLowerCase())}`;
+const stateTag=(value)=>`state-tag ${esc(String(value||'').toLowerCase())}`;
+const empty=(title,copy,action='')=>`<div class="empty-state"><div><div class="empty-mark">[ / ]</div><strong>${esc(title)}</strong><span>${esc(copy)}</span>${action?`<div class="empty-actions">${action}</div>`:''}</div></div>`;
+const pageHead=(kicker,title,copy,actions='')=>`<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${copy}</p></div>${actions?`<div class="page-actions">${actions}</div>`:''}</div>`;
+const panelHead=(title,meta='')=>`<div class="panel-head"><h2 class="panel-title">${title}</h2><span class="panel-kicker">${meta}</span></div>`;
+const table=(heads,rows,emptyCopy='No records in this view.')=>rows.length?`<div class="table-wrap"><table><thead><tr>${heads.map((head)=>`<th>${head}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`:empty('NO RECORDS',emptyCopy);
+
+function render(){
+  const views={overview:renderOverview,fleet:renderFleet,detections:renderDetections,processes:renderProcesses,network:renderNetwork,incidents:renderIncidents,rules:renderRules,audit:renderAudit,range:renderRange};
+  $('#view-root').innerHTML=(views[state.view]||renderOverview)();
+  $('#crumb').textContent=state.view.toUpperCase().replace('RANGE','SENTINEL RANGE');
+  document.querySelectorAll('.nav-item').forEach((item)=>item.classList.toggle('selected',item.dataset.view===state.view));
+  if(state.view==='range')syncRangeControls();
+  if(state.view==='incidents')syncIncidentControls();
 }
-loadScenarios();
-refresh();
-setInterval(refresh, 8000);
+
+function metric(label,value,note,extra=''){return `<div class="metric"><div class="metric-label"><span>${label}</span><span>${extra}</span></div><div class="metric-value ${label==='OPEN DETECTIONS'&&Number(value)>0?'alert':''}">${value}</div><div class="metric-note">${note}</div></div>`}
+function renderOverview(){
+  const simEvents=state.events.filter((e)=>e.simulation_run_id);const liveEvents=state.events.filter((e)=>!e.simulation_run_id);const openAlerts=state.alerts.filter((a)=>a.status==='open');const openCases=state.incidents.filter((i)=>i.status!=='resolved');
+  const hours=Array.from({length:12},(_,i)=>{const t=new Date(Date.now()-(11-i)*30*60*1000);const bucket=state.events.filter((e)=>{const x=new Date(e.ingested_at||e.time);return x>=new Date(t.getTime()-30*60*1000)&&x<=t});return {label:t.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false}),live:bucket.filter((e)=>!e.simulation_run_id).length,sim:bucket.filter((e)=>!!e.simulation_run_id).length,count:bucket.length}});
+  const max=Math.max(1,...hours.map((x)=>x.count));
+  const recent=[...state.alerts].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,6).map(alertRow);
+  const launch=state.scenarios.slice(0,3).map((s)=>`<button class="quick-card" data-launch="${esc(s.id)}"><span class="quick-id">${esc(s.id)} / SCENARIO</span><strong>${esc(s.name)}</strong><small>${esc(s.summary)}</small></button>`).join('');
+  return `${pageHead('COMMAND / LIVE POSTURE','Security operations overview','The current service view across observed endpoints, detections, and isolated replay activity.',`<button class="button primary" data-nav="range">RUN A VALIDATION SCENARIO <span>→</span></button>`)}
+    <div class="metric-grid">${metric('ENDPOINTS OBSERVED',state.endpoints.filter((e)=>!e.simulated).length,'Hosts with live submitted telemetry')}${metric('EVENTS PROCESSED',liveEvents.length,'Observed live events')}${metric('OPEN DETECTIONS',openAlerts.length,'Alerts awaiting analyst review')}${metric('OPEN INCIDENTS',openCases.length,'Cases not yet resolved')}</div>
+    <div class="dash-grid"><section class="panel">${panelHead('Event ingestion','30 MINUTE BINS · ACTUAL STORED EVENTS')}<div class="chart-area"><div class="chart-y"><span>${max}</span><span>${Math.ceil(max/2)}</span><span>0</span></div><div class="bars">${hours.map((x)=>`<div class="bar-slot" title="${x.label}: ${x.count} events"><div class="bar" style="height:${Math.max(2,x.count/max*100)}%"><i class="bar-segment sim" style="height:${x.count?x.sim/x.count*100:0}%"></i><i class="bar-segment live" style="height:${x.count?x.live/x.count*100:0}%"></i></div><span class="bar-label">${x.label}</span></div>`).join('')}</div></div><div class="chart-foot"><span class="legend"><span><i class="live-legend"></i>LIVE</span><span><i></i>REPLAY</span></span><span>${liveEvents.length} LIVE / ${simEvents.length} REPLAY</span></div></section>
+      <section class="panel">${panelHead('Detection severity','OPEN ALERTS ONLY')}${severityChart(openAlerts)}</section></div>
+    <div class="dash-grid"><section class="panel">${panelHead('Recent detections',`${state.alerts.length} TOTAL`,` `)}${recent.length?table(['SEVERITY','DETECTION','ENDPOINT','FIRST SEEN','STATE'],recent,'No alerts yet. Run a range scenario to generate labeled detections.'):`${empty('DETECTION QUEUE CLEAR','No alerts yet. Execute a safe replay to populate the alert workflow.',`<button class="button primary" data-nav="range">OPEN SENTINEL RANGE</button>`)}`}</section>
+      <section class="panel">${panelHead('Sensor coverage','NO AGENT CHECK-IN')}${state.endpoints.some((e)=>!e.simulated)?`<div class="empty-banner"><span>!</span><div><b>Telemetry received from ${state.endpoints.filter((e)=>!e.simulated).length} host(s)</b><br>Agents are not enrolled; these are submitted events.</div></div>`:empty('NO LIVE ENDPOINTS','The Windows event collector is not available in this build.')}${panelHead('Replay coverage',`${state.scenarios.length} FIXTURES`)}<div class="severity-list"><div class="severity-row"><span>Scenario tests</span><div class="severity-track"><div class="severity-fill low" style="width:${state.scenarios.length?100:0}%"></div></div><strong>${state.scenarios.length}</strong></div></div><button class="text-link" data-nav="range">OPEN VALIDATION LAB →</button></section></div>
+    <section class="panel">${panelHead('Launch a deterministic exercise','SYNTHETIC TELEMETRY · NO HOST ACTIONS')}<div class="quick-grid">${launch||empty('NO FIXTURES','Scenario definitions are not available.')}</div></section>`;
+}
+function severityChart(alerts){const levels=['critical','high','medium','low'];const counts=levels.map((level)=>alerts.filter((a)=>a.severity===level).length);const max=Math.max(1,...counts);return `<div class="severity-list">${levels.map((level,i)=>`<div class="severity-row"><span>${level}</span><div class="severity-track"><div class="severity-fill ${level}" style="width:${counts[i]/max*100}%"></div></div><strong>${counts[i]}</strong></div>`).join('')}</div><div class="chart-foot"><span>Counts from stored alerts</span><span>${alerts.length} OPEN</span></div>`}
+function alertRow(a){return `<tr><td><span class="${sevClass(a.severity)}">${esc(a.severity)}</span></td><td><span class="cell-main">${esc(a.title)}</span><span class="cell-sub">${esc(a.rule_id)} · ${esc(a.technique||'NO TECHNIQUE')}</span></td><td><span class="cell-main">${esc(a.hostname)}</span></td><td class="mono">${fmtTime(a.created_at)}</td><td><span class="${stateTag(a.status)}">${esc(a.status)}</span></td><td><button class="text-link" data-alert="${esc(a.id)}">INSPECT</button></td></tr>`}
+function renderDetections(){const query=state.filters.query.toLowerCase();const rows=state.alerts.filter((a)=>(state.filters.severity==='all'||a.severity===state.filters.severity)&&(state.filters.status==='all'||a.status===state.filters.status)&&(!query||`${a.title} ${a.hostname} ${a.rule_id} ${a.technique}`.toLowerCase().includes(query)));const selected=byId(state.alerts,state.selectedAlert);return `${pageHead('INVESTIGATION / ALERT QUEUE','Threat detections','Evidence-linked alert records. Simulation provenance stays visible on every replay detection.',`<button class="button" data-action="clear-filters">CLEAR FILTERS</button>`)}<section class="panel"><div class="filters"><input id="alert-search" value="${esc(state.filters.query)}" placeholder="Search rule, host, technique" aria-label="Search detections"><select id="severity-filter" aria-label="Severity filter"><option value="all">All severities</option>${['critical','high','medium','low'].map((x)=>`<option ${state.filters.severity===x?'selected':''} value="${x}">${x}</option>`).join('')}</select><select id="status-filter" aria-label="Status filter"><option value="all">All states</option>${['open','acknowledged','closed'].map((x)=>`<option ${state.filters.status===x?'selected':''} value="${x}">${x}</option>`).join('')}</select><span class="panel-kicker">${rows.length} / ${state.alerts.length} MATCHES</span></div>${table(['SEVERITY','RULE / EVIDENCE','ENDPOINT','CREATED','STATE',''],rows.map(alertRow),'Run an exercise or submit a normalized event to create detections.')}</section>${selected?renderAlertDetail(selected):''}`}
+function renderAlertDetail(a){const events=a.event_ids.map((id)=>state.events.find((e)=>e.id===id)).filter(Boolean);return `<section class="panel" style="margin-top:12px">${panelHead('Detection evidence',a.rule_id)}<div class="two-col"><div class="detail-list"><div class="detail-row"><span>Rule</span><span>${esc(a.title)} · ${esc(a.rule_id)} r1</span></div><div class="detail-row"><span>Severity / confidence</span><span><span class="${sevClass(a.severity)}">${esc(a.severity)}</span> &nbsp; ${a.confidence}% confidence score (rule metadata)</span></div><div class="detail-row"><span>ATT&CK</span><span>${esc(a.technique||'Not mapped')}</span></div><div class="detail-row"><span>Evidence</span><span>${esc(a.evidence)}</span></div><div class="detail-row"><span>Event IDs</span><span>${events.map((e)=>esc(e.id)).join('<br>')||'Referenced events unavailable'}</span></div><div class="detail-row"><span>Data provenance</span><span>${a.simulation_run_id?`SIMULATED · ${esc(a.simulation_run_id)}`:'LIVE SUBMISSION'}</span></div></div><div><label class="form-label" for="alert-note">ANALYST NOTE</label><textarea id="alert-note" class="note-field" placeholder="Record investigation context">${esc(a.analyst_notes)}</textarea><label class="form-label" for="alert-assignee">ASSIGNMENT</label><input class="field" id="alert-assignee" value="${esc(a.assignee)}" placeholder="Analyst name"><div class="page-actions" style="margin-top:9px"><button class="button primary" data-action="save-alert" data-id="${esc(a.id)}">SAVE NOTE</button><button class="button" data-action="ack-alert" data-id="${esc(a.id)}">${a.status==='acknowledged'?'ACKNOWLEDGED':'ACKNOWLEDGE'}</button><button class="button subtle" data-action="close-alert" data-id="${esc(a.id)}">CLOSE</button></div></div></div></section>`}
+function renderFleet(){const endpoints=state.endpoints;const cards=endpoints.map((e)=>`<article class="endpoint-card"><div class="endpoint-top"><div><div class="endpoint-name">${esc(e.hostname)}</div><div class="endpoint-id">${esc(e.host_id)}</div></div><span class="source-tag ${e.simulated?'sim':''}">${e.simulated?'SIMULATION':'OBSERVED'}</span></div><div class="endpoint-meta"><div><small>PLATFORM</small><b>${esc(e.os)}</b></div><div><small>LAST EVENT</small><b>${fmtTime(e.last_seen)}</b></div><div><small>SENSOR STATUS</small><b>${e.simulated?'NOT A LIVE SENSOR':'SOURCE NOT ATTESTED'}</b></div><div><small>CONNECTIVITY</small><b>EVENT PRESENCE ONLY</b></div></div><button class="text-link" data-host="${esc(e.host_id)}">INSPECT ACTIVITY →</button></article>`).join('');return `${pageHead('ASSET INVENTORY / SENSOR STATUS','Endpoint fleet','Inventory is derived from event sources. Event presence does not imply an enrolled or connected agent.')}${cards?`<div class="fleet-cards">${cards}</div>`:empty('FLEET IS EMPTY','No hosts have submitted telemetry. The Windows sensor is not included in this build.')}`}
+function renderProcesses(){const hosts=[...new Set(state.events.map((e)=>e.host_id))];if(!hosts.length)return `${pageHead('INVESTIGATION / PROCESS GRAPH','Process investigator','Reconstruct parent and child relationships from the available event records.')}${empty('NO PROCESS TELEMETRY','The current fixtures provide only the process relationships explicitly represented in their event fields.')}`;const host=state.filters.processHost||hosts[0];const ev=state.events.filter((e)=>e.host_id===host&&e.process_id);const byParent=new Map();for(const e of ev){const list=byParent.get(e.parent_process_id)||[];list.push(e);byParent.set(e.parent_process_id,list)}const lines=ev.map((e)=>`<div class="tree-row"><span class="tree-branch">├─</span><span class="mono">PID ${e.process_id}</span><span>${esc(e.image||e.type)}</span><span class="tree-cmd">${esc(e.command_line||'command line unavailable')}</span>${state.alerts.some((a)=>a.event_ids.includes(e.id))?'<span class="severity-tag high">ALERT</span>':''}</div>`).join('');return `${pageHead('INVESTIGATION / PROCESS GRAPH','Process investigator','Parent-child links are shown only when process identifiers are present. Missing ancestry remains visible.') }<section class="panel"><div class="filters"><select id="process-host">${hosts.map((h)=>`<option value="${esc(h)}" ${h===host?'selected':''}>${esc(h)}</option>`).join('')}</select><span class="panel-kicker">${ev.length} PROCESS EVENTS · ${ev.some((e)=>e.simulation_run_id)?'SIMULATED':'OBSERVED'}</span></div>${ev.length?`<div class="process-tree"><div class="tree-root">HOST ${esc(host)} <span>└─ PARENT PID 20 · ${ev.some((e)=>e.parent_process_id)?'RELATIONSHIP PROVIDED':'ANCESTRY UNAVAILABLE'}</span></div>${lines}</div><div class="detail-list" style="margin-top:15px">${ev.map((e)=>`<div class="detail-row"><span>${esc(e.id)}</span><span>${esc(e.type)} · ${fmtTime(e.time)} · ${esc(e.user||'user context unavailable')}</span></div>`).join('')}</div>`:empty('NO PROCESS EVENTS','This host has no process execution records.')}</section>`}
+function renderNetwork(){const rows=state.events.filter((e)=>e.type.toLowerCase().includes('network')||e.destination).map((e)=>`<tr><td class="mono">${fmtTime(e.time)}</td><td>${esc(e.hostname)}</td><td class="mono">${esc(e.destination||'Destination unavailable')}</td><td>${esc(e.image||'Process unavailable')}</td><td class="mono">${esc(e.fields?.protocol||'Metadata only')}</td><td>${e.simulation_run_id?'<span class="source-tag sim">SIMULATED</span>':'<span class="source-tag">OBSERVED</span>'}</td></tr>`);const targets=new Set(state.events.filter((e)=>e.destination).map((e)=>e.destination));return `${pageHead('TELEMETRY / CONNECTION METADATA','Network activity','Connection metadata only. This view does not inspect packets or infer unavailable fields.') }<div class="network-summary"><div class="network-stat"><small>CONNECTION RECORDS</small><b>${rows.length}</b></div><div class="network-stat"><small>DESTINATIONS IN DATA</small><b>${targets.size}</b></div><div class="network-stat"><small>PACKET VISIBILITY</small><b>NONE</b></div></div><section class="panel">${panelHead('Connection history','EVENT-LEVEL METADATA')}${table(['TIME','ENDPOINT','DESTINATION','PROCESS','PROTOCOL','SOURCE'],rows,'No network event metadata is present in the loaded records.')}</section>`}
+function renderIncidents(){const incidents=[...state.incidents].sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));const rows=incidents.map((i)=>`<tr><td class="mono">${esc(i.id)}</td><td><span class="cell-main">${esc(i.hostname)}</span><span class="cell-sub">${i.simulation_run_id?`SIM · ${esc(i.simulation_run_id)}`:'LIVE SUBMISSION'}</span></td><td><span class="${sevClass(i.severity)}">${esc(i.severity)}</span></td><td>${i.alert_ids.length} alert(s)</td><td><span class="${stateTag(i.status)}">${esc(i.status)}</span></td><td class="mono">${fmtTime(i.updated_at)}</td><td><button class="text-link" data-incident="${esc(i.id)}">OPEN</button></td></tr>`);return `${pageHead('CASE MANAGEMENT / EVIDENCE','Incident investigation','Cases group alert evidence by host and run. Analyst updates are persisted and audit logged.') }<div class="incident-layout"><section class="panel">${panelHead('Incident queue',`${incidents.length} CASES`)}${table(['CASE','HOST / PROVENANCE','SEVERITY','EVIDENCE','STATUS','UPDATED',''],rows,'No cases have been created. Detection matches automatically open a case.')}</section><section class="panel incident-detail">${renderIncidentDetail(byId(incidents,state.selectedIncident)||incidents[0])}</section></div>`}
+function renderIncidentDetail(i){if(!i)return `<div class="panel-head"><h2 class="panel-title">Case details</h2></div>${empty('SELECT A CASE','Choose a case from the queue to review its evidence and history.')}`;const alerts=i.alert_ids.map((id)=>byId(state.alerts,id)).filter(Boolean);return `${panelHead('Case detail',i.id)}<button class="text-link" data-action="export-case" data-id="${esc(i.id)}">EXPORT INCIDENT REPORT ↓</button><div class="detail-list"><div class="detail-row"><span>Endpoint</span><span>${esc(i.hostname)}</span></div><div class="detail-row"><span>Severity</span><span class="${sevClass(i.severity)}">${esc(i.severity)}</span></div><div class="detail-row"><span>Provenance</span><span>${i.simulation_run_id?`SIMULATION · ${esc(i.simulation_run_id)}`:'LIVE SUBMISSION'}</span></div></div><div class="timeline">${alerts.map((a)=>`<div class="timeline-item ${a.simulation_run_id?'sim':''}"><strong>${esc(a.title)}</strong><small>${fmtTime(a.created_at)} · ${esc(a.rule_id)}</small></div>`).join('')||'<small>No linked alerts.</small>'}</div><label class="form-label" for="case-status">CASE STATUS</label><select class="select-field" id="case-status"><option value="open" ${i.status==='open'?'selected':''}>Open</option><option value="investigating" ${i.status==='investigating'?'selected':''}>Investigating</option><option value="resolved" ${i.status==='resolved'?'selected':''}>Resolved</option></select><label class="form-label" for="case-note">ANALYST NOTES</label><textarea id="case-note" class="note-field" placeholder="Document the investigation">${esc(i.analyst_notes)}</textarea><button class="button primary" style="margin-top:8px" data-action="save-case" data-id="${esc(i.id)}">SAVE CASE UPDATE</button>`}
+function syncIncidentControls(){const current=byId(state.incidents,state.selectedIncident);if(!current&&state.incidents.length)state.selectedIncident=state.incidents[0].id}
+function renderRules(){return `${pageHead('DETECTION ENGINEERING / RULE CATALOG','Detection rulebook','Enabled rules are versioned and explain their evidence conditions and known false positives.') }<section class="panel">${panelHead('Active rule set',`${state.rules.length} RULES · REVISION 1`)}<div class="rule-list">${state.rules.map((r)=>`<article class="rule-row"><div><h3>${esc(r.title)}</h3><p>${esc(r.description)}</p><div class="rule-meta"><span>${esc(r.id)}</span><span>REV ${r.revision}</span><span>${esc(r.severity.toUpperCase())}</span><span>${r.confidence}% RULE CONFIDENCE</span><span>ATT&CK ${esc(r.technique)}</span><span>${r.enabled?'ENABLED':'DISABLED'}</span></div><p>Field <code>${esc(r.field)}</code> contains <code>${esc(r.contains)}</code><br>False positives: ${esc(r.false_positive)}</p></div><button class="button" data-test-rule="${esc(r.id)}">TEST ON LOADED EVENTS</button></article>`).join('')}</div></section><section class="panel" style="margin-top:12px">${panelHead('Rule capability boundary','NATIVE SINGLE-FIELD SUBSET')}<div class="detail-list"><div class="detail-row"><span>Supported match</span><span>Case-insensitive contains on command_line, image, or type.</span></div><div class="detail-row"><span>Sigma</span><span>Not implemented. No universal Sigma compatibility claim.</span></div><div class="detail-row"><span>Temporal correlation</span><span>Not implemented. Events are matched independently; alerts are grouped by host and run.</span></div><div class="detail-row"><span>Version history / editing</span><span>Read-only catalog in this release.</span></div></div></section>`}
+function renderAudit(){const entries=[...state.audit].reverse();const rows=entries.map((entry)=>`<div class="audit-row"><time>${fmtTime(entry.time)}</time><b>${esc(entry.action||'activity')}</b><span>${esc(Object.entries(entry).filter(([key])=>key!=='action'&&key!=='time').map(([k,v])=>`${k}: ${v}`).join(' · ')||'Recorded activity')}</span></div>`).join('');return `${pageHead('GOVERNANCE / ACTIVITY LOG','Security audit','Logical append-only activity records for ingestion and analyst changes. Local JSON audit is not tamper-proof.') }<section class="panel">${panelHead('Audit history',`${entries.length} RECORDS`)}${rows?`<div class="audit-list">${rows}</div>`:empty('NO AUDIT ACTIVITY','Ingestion and case actions will appear here.')}</section>`}
+function renderRange() {
+  const scenario = state.scenarios.find((item) => item.id === state.selectedScenario) || state.scenarios[0];
+  if (!scenario) return `${pageHead('VALIDATION / REPLAY LAB', 'Sentinel Range', 'Safe synthetic telemetry exercises the shared detection rules.')}${empty('NO SCENARIOS', 'Replay fixtures could not be loaded.')}`;
+  const run = state.run?.scenario.id === scenario.id ? state.run : null;
+  const visible = run ? run.events.slice(0, run.index) : [];
+  const results = run?.report;
+  const techniques = [...new Set(scenario.expected_rule_ids.map((id) => byId(state.rules, id)?.technique).filter(Boolean))];
+  const stream = visible.length ? visible.map((event) => `<div class="stream-event"><time>${new Date(event.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</time><span><b>${esc(event.type)}</b><small>${esc(event.hostname)} · ${esc(event.image || event.destination || event.user || 'metadata only')}</small></span></div>`).join('') : '<div class="empty-inline">Start the replay to ingest events one at a time.</div>';
+  const resultsView = results ? `<div class="result-card ${results.success?'pass':'fail'}"><div class="result-state">${results.success?'SCENARIO PASSED':'SCENARIO FAILED'}</div><div class="result-stats"><div><small>RECALL</small><b>${results.recall===null?'N/A':Math.round(results.recall*100)+'%'}</b></div><div><small>PRECISION</small><b>${results.precision===null?'N/A':Math.round(results.precision*100)+'%'}</b></div><div><small>ALERTS</small><b>${results.alerts.length}</b></div></div><div class="scenario-meta">${results.detected.map((id)=>`<span>DETECTED ${esc(id)}</span>`).join('')}${results.missed.map((id)=>`<span class="missed">MISSED ${esc(id)}</span>`).join('')}</div><button class="text-link" data-action="export-report">EXPORT JSON REPORT ↓</button></div>` : `<div class="empty-inline">Results appear after the final event. Required: ${scenario.expected_rule_ids.map(esc).join(', ')}.</div>`;
+  return `${pageHead('VALIDATION / REPLAY LAB', 'Sentinel Range', 'Replay curated telemetry one event at a time through the same ingest and detection path.', '<span class="source-tag sim">SIMULATION ONLY</span>')}
+    <div class="range-layout">
+      <section class="panel">${panelHead('Scenario library', `${state.scenarios.length} DETERMINISTIC EXERCISES`)}<div class="scenario-picker">${state.scenarios.map((item, index) => `<button class="scenario-option ${item.id===scenario.id?'active':''}" data-scenario="${esc(item.id)}"><span class="scenario-index">${String(index+1).padStart(2,'0')}</span><span><strong>${esc(item.name)}</strong><small>${esc(item.summary)}</small></span></button>`).join('')}</div></section>
+      <section class="panel"><div class="scenario-detail"><div class="eyebrow">${esc(scenario.id)} / OBJECTIVES</div><h2>${esc(scenario.name)}</h2><p>${esc(scenario.summary)} This replay creates records only; no commands, file changes, credentials, or network connections are executed.</p><div class="scenario-meta"><span>${scenario.events.length} FIXTURE EVENTS</span><span>${scenario.expected_rule_ids.length} REQUIRED DETECTIONS</span><span>FIXTURE VERSION 1.0</span>${techniques.map((technique)=>`<span>ATT&CK ${esc(technique)}</span>`).join('')}</div></div>
+      <div class="scenario-controls"><button class="button primary" data-action="start-run" ${run?.playing?'disabled':''}>${run?.playing?'REPLAY RUNNING':run&&run.index<scenario.events.length?'RESUME REPLAY':'START REPLAY'}</button><button class="button" data-action="pause-run" ${!run?.playing?'disabled':''}>PAUSE</button><button class="button" data-action="reset-run" ${!run?'disabled':''}>RESET RUN</button><select id="run-speed" aria-label="Replay speed"><option value="1200">1×</option><option value="600">2×</option><option value="250">4×</option></select></div>
+      ${run?`<div class="run-progress"><span>RUN ${esc(run.id)}</span><span>${Math.min(run.index,scenario.events.length)} / ${scenario.events.length} EVENTS INGESTED</span></div><div class="progress-track"><i style="width:${Math.min(100,run.index/scenario.events.length*100)}%"></i></div>`:''}
+      <div class="range-columns"><div>${panelHead('Telemetry stream', `${visible.length} EVENTS INGESTED`)}<div class="stream-list">${stream}</div></div><div>${panelHead('Run results', results ? (results.success?'ALL ASSERTIONS MET':'ASSERTION FAILED') : 'WAITING FOR COMPLETION')}${resultsView}</div></div></section>
+    </div>
+    ${run?`<section class="panel" style="margin-top:12px">${panelHead('Detection feed', `${run.alerts.length} ALERTS GENERATED`)}${table(['SEVERITY','DETECTION','HOST','EVIDENCE'],run.alerts.map((alert)=>`<tr><td><span class="${sevClass(alert.severity)}">${esc(alert.severity)}</span></td><td>${esc(alert.title)}<span class="cell-sub">${esc(alert.rule_id)} · ${esc(alert.technique)}</span></td><td>${esc(alert.hostname)}</td><td>${esc(alert.evidence)}</td></tr>`),'No rule matches have been generated yet.')}</section>`:''}`;
+}
+function syncRangeControls(){const control=$('#run-speed');if(control&&state.run)control.value=String(state.run.speed)}
+
+async function startRun(){if(state.run?.playing)return;const scenario=state.scenarios.find((s)=>s.id===state.selectedScenario)||state.scenarios[0];if(!scenario)return;if(!state.staticDemo&&!token()){notify('Set the local analyst token before starting a replay.');return}if(state.run?.scenario.id===scenario.id&&state.run.index<scenario.events.length){state.run.playing=true;state.run.speed=Number($('#run-speed')?.value||state.run.speed);render();await tickRun();return}state.run={id:`SIM-${Date.now()}`,scenario,events:[],alerts:[],index:0,playing:true,speed:Number($('#run-speed')?.value||1200),report:null};render();await tickRun()}
+async function tickRun(){const run=state.run;if(!run||!run.playing)return;if(run.index>=run.scenario.events.length){finishRun();return}const fixture=run.scenario.events[run.index];const event={...fixture,id:`${run.id}-${fixture.id}`,time:new Date(Date.now()+run.index*1000).toISOString(),simulation_run_id:run.id};try{const result=await api('api/ingest',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(event)});run.events.push(event);run.alerts.push(...result.alerts);run.index++;await refreshData();if(run.index>=run.scenario.events.length){finishRun();return}if(run.playing)state.timer=setTimeout(tickRun,run.speed)}catch(error){run.playing=false;render();notify(`Replay stopped: ${error.message}`)}}
+function finishRun(){const run=state.run;if(!run)return;const matched=new Set(run.alerts.map((alert)=>alert.rule_id));const detected=run.scenario.expected_rule_ids.filter((id)=>matched.has(id));const missed=run.scenario.expected_rule_ids.filter((id)=>!matched.has(id));const unexpected=[...new Set(run.alerts.map((alert)=>alert.rule_id))].filter((id)=>!run.scenario.expected_rule_ids.includes(id));run.playing=false;run.report={scenario:run.scenario.name,scenario_id:run.scenario.id,scenario_version:'1.0',dataset_version:'1.0',rule_set_version:'1',simulation_seed:'deterministic-fixture-v1',run_id:run.id,event_count:run.events.length,expected_alerts:run.scenario.expected_rule_ids,detected,missed,unexpected,success:missed.length===0,recall:run.scenario.expected_rule_ids.length?detected.length/run.scenario.expected_rule_ids.length:null,precision:detected.length+unexpected.length?detected.length/(detected.length+unexpected.length):null,alerts:run.alerts,processing_errors:[]};render();notify(run.report.success?'Replay completed. All mandatory detections matched.':'Replay completed with missed detections.')}
+async function resetRun(){if(state.timer)clearTimeout(state.timer);const run=state.run;if(run){try{await api(`api/simulations/${encodeURIComponent(run.id)}`,{method:'DELETE',headers:{Authorization:`Bearer ${token()}`}})}catch(error){notify(error.message);return}}state.run=null;await refreshData();render();notify('Replay records for this run were removed.')}
+
+function navigate(view){if(!view)return;state.view=view;render();window.location.hash=view}
+function notify(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('show');clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.classList.remove('show'),2800)}
+async function mutate(path,body,method='PATCH'){if(!state.staticDemo&&!token()){notify('Set the analyst token to save this update.');return}try{await api(path,{method,headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(body)});await refreshData();notify('Update saved and recorded in the audit log.')}catch(error){notify(error.message)}}
+function bind(){document.addEventListener('click',async(event)=>{const nav=event.target.closest('[data-view],[data-nav]');if(nav){navigate(nav.dataset.view||nav.dataset.nav);return}const scenario=event.target.closest('[data-scenario],[data-launch]');if(scenario){const nextScenario=scenario.dataset.scenario||scenario.dataset.launch;if(state.run?.playing&&state.run.scenario.id!==nextScenario){notify('Pause the active replay before switching scenarios.');return}state.selectedScenario=nextScenario;if(state.run?.scenario.id!==state.selectedScenario)state.run=null;navigate('range');return}const alert=event.target.closest('[data-alert]');if(alert){state.selectedAlert=alert.dataset.alert;render();return}const incident=event.target.closest('[data-incident]');if(incident){state.selectedIncident=incident.dataset.incident;render();return}const host=event.target.closest('[data-host]');if(host){state.filters.processHost=host.dataset.host;navigate('processes');return}const test=event.target.closest('[data-test-rule]');if(test){const rule=byId(state.rules,test.dataset.testRule);const matches=state.events.filter((e)=>String(e[rule.field]||'').toLowerCase().includes(rule.contains.toLowerCase()));notify(`${rule.id}: ${matches.length} matching event(s) in loaded data.`);return}const action=event.target.closest('[data-action]');if(!action)return;const id=action.dataset.id;switch(action.dataset.action){case'clear-filters':state.filters={severity:'all',status:'all',query:''};render();break;case'ack-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'acknowledged'});break;case'close-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'closed'});break;case'save-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{analyst_notes:$('#alert-note').value,assignee:$('#alert-assignee').value});break;case'save-case':await mutate(`api/incidents/${encodeURIComponent(id)}`,{status:$('#case-status').value,analyst_notes:$('#case-note').value});break;case'start-run':await startRun();break;case'pause-run':if(state.timer)clearTimeout(state.timer);if(state.run){state.run.playing=false;render()}break;case'reset-run':await resetRun();break;case'export-report':if(state.run?.report)download(state.run.report);break;case'export-case':{const incident=byId(state.incidents,id);if(incident){const alerts=incident.alert_ids.map((alertId)=>byId(state.alerts,alertId)).filter(Boolean);const events=alerts.flatMap((alert)=>alert.event_ids.map((eventId)=>state.events.find((item)=>item.id===eventId)).filter(Boolean));download({exported_at:new Date().toISOString(),incident,alerts,events})}break}}});
+  document.addEventListener('input',(event)=>{if(event.target.id==='alert-search'){state.filters.query=event.target.value;const position=event.target.selectionStart;render();const input=$('#alert-search');input.focus();input.setSelectionRange(position,position)}});
+  document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
+}
+function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id}.json`;anchor.click();URL.revokeObjectURL(anchor.href)}
+$('#tokenBtn').onclick=()=>{const value=prompt('Paste the analyst token printed when the local server started. It stays in this browser.');if(value){localStorage.setItem('sentinel-token',value.trim());$('#operator-mode').textContent='TOKEN SAVED';notify('Local analyst token saved in this browser.')}};
+$('#refresh').onclick=()=>refreshData().catch((error)=>notify(error.message));
+$('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`;setInterval(()=>$('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`,1000);
+bind();refreshData().catch((error)=>{$('#view-root').innerHTML=empty('SERVICE UNAVAILABLE',error.message)});
