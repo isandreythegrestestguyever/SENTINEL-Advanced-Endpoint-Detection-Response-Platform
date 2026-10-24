@@ -20,7 +20,7 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := headers(routes(db, "test-token"))
+	handler := headers(routes(db, AccessTokens{Admin: "test-token"}))
 	event := model.Event{
 		ID: "evt-1", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "lab-1",
 		Hostname: "LAB-1", Source: "test", Type: "process_start", Category: "endpoint",
@@ -68,6 +68,10 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 
 	response = send(t, handler, http.MethodGet, "/api/incidents", nil, "")
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated incident read status = %d, want 401", response.Code)
+	}
+	response = send(t, handler, http.MethodGet, "/api/incidents", nil, "test-token")
 	if response.Code != http.StatusOK {
 		t.Fatalf("incident list status = %d", response.Code)
 	}
@@ -103,12 +107,36 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token", Analyst: "analyst-token"}))
+	response := send(t, handler, http.MethodGet, "/api/events", nil, "")
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated event read status = %d, want 401", response.Code)
+	}
+	response = send(t, handler, http.MethodGet, "/api/events", nil, "analyst-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("analyst event read status = %d, want 200", response.Code)
+	}
+	response = send(t, handler, http.MethodDelete, "/api/simulations/run-1", nil, "analyst-token")
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("analyst simulation reset status = %d, want 401", response.Code)
+	}
+	response = send(t, handler, http.MethodDelete, "/api/simulations/run-1", nil, "admin-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("administrator simulation reset status = %d, want 200", response.Code)
+	}
+}
+
 func TestIngestTriggersBoundedAuthenticationCorrelation(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := headers(routes(db, "test-token"))
+	handler := headers(routes(db, AccessTokens{Admin: "test-token"}))
 	base := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
 	for index := 0; index < 3; index++ {
 		event := model.Event{ID: fmt.Sprintf("auth-%d", index), SchemaVersion: "1.0", Time: base.Add(time.Duration(index) * time.Minute), HostID: "auth-host", Hostname: "AUTH-HOST", Source: "test", Type: "authentication_failure", SimulationRunID: "auth-run"}
@@ -142,7 +170,7 @@ func TestAllScenarioExpectedRulesThroughHTTPPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := headers(routes(db, "test-token"))
+	handler := headers(routes(db, AccessTokens{Admin: "test-token"}))
 	for _, scenario := range simulator.All() {
 		found := map[string]bool{}
 		runID := "http-" + scenario.ID

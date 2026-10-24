@@ -8,7 +8,7 @@ SENTINEL is an early, functional security engineering project. The Go service ac
 
 The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the browser. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to exercise the backend event path and server-side persistence.
 
-> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, multi-user authentication, RBAC, mTLS, or production deployment configuration. PostgreSQL support does not make this a production service. The local JSON store and shared bearer token are development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
+> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, user accounts or sessions, mTLS, or production deployment configuration. PostgreSQL support does not make this a production service. Configured analyst and administrator bearer tokens are a minimal single-process access split, not a full identity system. The local JSON store is development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
 ## Run locally
 
@@ -28,7 +28,8 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 | `SENTINEL_ADDR` | `127.0.0.1:8080` | Listen address; loopback by default |
 | `SENTINEL_DB` | `sentinel-data.json` | Local JSON persistence path |
 | `SENTINEL_DATABASE_URL` | unset | PostgreSQL connection string; enables migrations and SQL storage |
-| `SENTINEL_ADMIN_TOKEN` | Random per start | Bearer token for write routes |
+| `SENTINEL_ADMIN_TOKEN` | Random per start | Administrator bearer token; required for simulation reset |
+| `SENTINEL_ANALYST_TOKEN` | unset | Optional distinct analyst bearer token; can read data and submit events or analyst updates |
 | `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
 
 ## What works
@@ -53,7 +54,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 4. The dashboard reads actual local API data and sends analyst changes back to authenticated routes.
 5. Sentinel Range replays events individually through `POST /api/ingest`; it evaluates the actual returned alerts against each scenario's declared expected rule IDs.
 
-Read routes: `/api/health`, `/api/overview`, `/api/events`, `/api/endpoints`, `/api/alerts`, `/api/incidents`, `/api/audit`, `/api/rules`, and `/api/scenarios`. Write routes require `Authorization: Bearer <token>`: `POST /api/ingest`, `POST /api/simulate`, `PATCH /api/alerts/{id}`, `PATCH /api/incidents/{id}`, and `DELETE /api/simulations/{run}`.
+`/api/health`, `/api/rules`, and `/api/scenarios` are public. Overview, event, endpoint, alert, incident, and audit data require an administrator or analyst bearer token. `POST /api/ingest`, `POST /api/simulate`, `PATCH /api/alerts/{id}`, and `PATCH /api/incidents/{id}` accept either role. `DELETE /api/simulations/{run}` requires the administrator token.
 
 ## Repository guide
 
@@ -74,7 +75,7 @@ The current source has been checked with `go test ./...`, `go vet ./...`, and `n
 
 ## Roadmap
 
-The next major engineering slices are a Windows Rust service using documented event providers; authenticated endpoint enrollment and secure transport; analyst RBAC; broader browser end-to-end tests; and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+The next major engineering slices are a Windows Rust service using documented event providers; authenticated endpoint enrollment and mutual TLS; user accounts and session-based analyst access; broader browser end-to-end tests; and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

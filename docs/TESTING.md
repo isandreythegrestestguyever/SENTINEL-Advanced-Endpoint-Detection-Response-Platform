@@ -11,7 +11,7 @@ go vet ./...
 node --check web/app.js
 ```
 
-The Go suite asserts expected detections for all six deterministic scenarios, runs every scenario through authenticated HTTP ingestion, checks the authentication count threshold, tests JSON persistence and cleanup, and exercises duplicate rejection and analyst updates. PostgreSQL repository integration tests run when `SENTINEL_TEST_DATABASE_URL` is provided. GitHub Actions starts PostgreSQL 17 and sets that variable, so that job also verifies migrations, indexed recent-event queries, SQL-backed correlation evidence, and transactional reset. `go vet` checks the Go packages. `node --check` only parses the browser script; it does not exercise DOM behavior.
+The Go suite asserts expected detections for all six deterministic scenarios, runs every scenario through authenticated HTTP ingestion, checks the authentication count threshold, tests JSON persistence and cleanup, verifies protected reads and administrator-only simulation reset, and exercises duplicate rejection and analyst updates. PostgreSQL repository integration tests run when `SENTINEL_TEST_DATABASE_URL` is provided. GitHub Actions starts PostgreSQL 17 and sets that variable, so that job also verifies migrations, indexed recent-event queries, SQL-backed correlation evidence, and transactional reset. `go vet` checks the Go packages. `node --check` parses the browser script; `node --test web/app.test.mjs` checks simulation state serialization and restoration, but neither test exercises real browser DOM behavior.
 
 ## Manual backend smoke path
 

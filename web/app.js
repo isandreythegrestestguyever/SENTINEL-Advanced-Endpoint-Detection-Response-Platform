@@ -44,11 +44,19 @@ function restoreDemo() {
 async function api(path, options = {}) {
   if (state.staticDemo) return demoAPI(path, options);
   try {
-    const response = await fetch(path, options);
-    if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
+    const headers = new Headers(options.headers || {});
+    if (path.startsWith('api/') && token() && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token()}`);
+    const response = await fetch(path, {...options, headers});
+    if (!response.ok) {
+      const error = new Error((await response.text()) || `Request failed (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
     return response.status === 204 ? null : response.json();
   } catch (error) {
     if (!path.startsWith('api/')) throw error;
+    const pagesFallback = error.status === 404 && window.location.hostname.endsWith('github.io');
+    if ((error.status && !pagesFallback) || error.status === 401 || error.status === 403) throw error;
     state.staticDemo = true;
     state.demo = await fetch('demo-data.json').then((response) => {
       if (!response.ok) throw new Error('Static replay data is unavailable.');
@@ -221,7 +229,7 @@ function bind(){document.addEventListener('click',async(event)=>{const nav=event
   document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
 }
 function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id||report.run?.id||report.incident?.id||'export'}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(anchor.href),1000)}
-$('#tokenBtn').onclick=()=>{const value=prompt('Paste the analyst token printed when the local server started. It stays in this browser.');if(value){localStorage.setItem('sentinel-token',value.trim());$('#operator-mode').textContent='TOKEN SAVED';notify('Local analyst token saved in this browser.')}};
+$('#tokenBtn').onclick=()=>{const value=prompt('Paste the analyst or administrator bearer token for this local service. It stays in this browser.');if(value){localStorage.setItem('sentinel-token',value.trim());$('#operator-mode').textContent='TOKEN SAVED';refreshData().catch((error)=>notify(error.message));notify('Local access token saved in this browser.')}};
 $('#refresh').onclick=()=>refreshData().catch((error)=>notify(error.message));
 $('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`;setInterval(()=>$('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`,1000);
 bind();refreshData().catch((error)=>{$('#view-root').innerHTML=empty('SERVICE UNAVAILABLE',error.message)});

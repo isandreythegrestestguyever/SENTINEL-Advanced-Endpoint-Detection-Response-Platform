@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -39,25 +42,70 @@ func main() {
 	}
 	defer db.Close()
 	token := os.Getenv("SENTINEL_ADMIN_TOKEN")
+	analystToken := os.Getenv("SENTINEL_ANALYST_TOKEN")
 	if token == "" {
 		b := make([]byte, 24)
 		if _, err := rand.Read(b); err != nil {
 			log.Fatal(err)
 		}
 		token = hex.EncodeToString(b)
-		log.Printf("Temporary analyst token (set SENTINEL_ADMIN_TOKEN to persist): %s", token)
+		log.Printf("Temporary administrator token (set SENTINEL_ADMIN_TOKEN to persist): %s", token)
 	}
-	mux := routes(db, token)
+	if analystToken == token {
+		log.Fatal("SENTINEL_ANALYST_TOKEN and SENTINEL_ADMIN_TOKEN must be different")
+	}
+	if analystToken == "" {
+		log.Printf("SENTINEL_ANALYST_TOKEN is unset; the administrator token can access analyst routes")
+	}
+	mux := routes(db, AccessTokens{Admin: token, Analyst: analystToken})
 	addr := env("SENTINEL_ADDR", "127.0.0.1:8080")
-	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	log.Printf("SENTINEL listening on http://%s", addr)
+	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+	serveErrors := make(chan error, 1)
 	if cert, key := os.Getenv("SENTINEL_TLS_CERT"), os.Getenv("SENTINEL_TLS_KEY"); cert != "" && key != "" {
-		log.Fatal(server.ListenAndServeTLS(cert, key))
+		log.Printf("SENTINEL listening on https://%s (minimum TLS 1.3)", addr)
+		go func() { serveErrors <- server.ListenAndServeTLS(cert, key) }()
+	} else {
+		log.Printf("SENTINEL listening on http://%s", addr)
+		go func() { serveErrors <- server.ListenAndServe() }()
 	}
-	log.Fatal(server.ListenAndServe())
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case err := <-serveErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-shutdownContext.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("graceful shutdown: %v", err)
+			if closeErr := server.Close(); closeErr != nil {
+				log.Printf("force close: %v", closeErr)
+			}
+		}
+		if err := <-serveErrors; !errors.Is(err, http.ErrServerClosed) && err != nil {
+			log.Printf("HTTP server stopped: %v", err)
+		}
+	}
 }
-func routes(db store.Repository, token string) http.Handler {
+
+type AccessTokens struct {
+	Admin   string
+	Analyst string
+}
+
+func routes(db store.Repository, tokens AccessTokens) http.Handler {
 	mux := http.NewServeMux()
+	read := func(handler http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if accessRole(r, tokens) == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			handler(w, r)
+		}
+	}
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := db.Ping(r.Context()); err != nil {
 			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
@@ -65,7 +113,7 @@ func routes(db store.Repository, token string) http.Handler {
 		}
 		jsonOut(w, map[string]any{"status": "ok", "mode": "local-development", "schema_version": "1.0"})
 	})
-	mux.HandleFunc("/api/overview", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/overview", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if !ok {
 			return
@@ -83,14 +131,14 @@ func routes(db store.Repository, token string) http.Handler {
 			}
 		}
 		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": 0, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT · NO LIVE SENSORS"})
-	})
-	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/events", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
 			jsonOut(w, d.Events)
 		}
-	})
-	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/endpoints", read(func(w http.ResponseWriter, r *http.Request) {
 		latest := map[string]model.Endpoint{}
 		d, ok := readData(w, db)
 		if !ok {
@@ -116,27 +164,27 @@ func routes(db store.Repository, token string) http.Handler {
 			endpoints = append(endpoints, endpoint)
 		}
 		jsonOut(w, endpoints)
-	})
-	mux.HandleFunc("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/alerts", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
 			jsonOut(w, d.Alerts)
 		}
-	})
-	mux.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/incidents", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
 			jsonOut(w, d.Incidents)
 		}
-	})
-	mux.HandleFunc("/api/audit", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/audit", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
 			jsonOut(w, d.Audit)
 		}
-	})
+	}))
 	mux.HandleFunc("PATCH /api/alerts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !auth(r, token) {
+		if accessRole(r, tokens) == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -169,7 +217,7 @@ func routes(db store.Repository, token string) http.Handler {
 		jsonOut(w, alert)
 	})
 	mux.HandleFunc("PATCH /api/incidents/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !auth(r, token) {
+		if accessRole(r, tokens) == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -201,7 +249,7 @@ func routes(db store.Repository, token string) http.Handler {
 		jsonOut(w, incident)
 	})
 	mux.HandleFunc("DELETE /api/simulations/{run}", func(w http.ResponseWriter, r *http.Request) {
-		if !auth(r, token) {
+		if accessRole(r, tokens) != "admin" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -223,7 +271,7 @@ func routes(db store.Repository, token string) http.Handler {
 			http.Error(w, "POST required", 405)
 			return
 		}
-		if !auth(r, token) {
+		if accessRole(r, tokens) == "" {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
@@ -244,7 +292,7 @@ func routes(db store.Repository, token string) http.Handler {
 			http.Error(w, "POST required", 405)
 			return
 		}
-		if !auth(r, token) {
+		if accessRole(r, tokens) == "" {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
@@ -378,12 +426,26 @@ func valid(e model.Event) string {
 	return ""
 }
 func auth(r *http.Request, t string) bool {
-	const prefix = "Bearer "
+	return bearerMatches(r.Header.Get("Authorization"), t)
+}
+
+func accessRole(r *http.Request, tokens AccessTokens) string {
 	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, prefix) || len(header) == len(prefix) {
+	if bearerMatches(header, tokens.Admin) {
+		return "admin"
+	}
+	if bearerMatches(header, tokens.Analyst) {
+		return "analyst"
+	}
+	return ""
+}
+
+func bearerMatches(header, token string) bool {
+	const prefix = "Bearer "
+	if token == "" || !strings.HasPrefix(header, prefix) || len(header) == len(prefix) {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, prefix)), []byte(t)) == 1
+	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, prefix)), []byte(token)) == 1
 }
 func headers(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
