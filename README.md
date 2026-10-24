@@ -6,7 +6,7 @@
 
 SENTINEL is an early, functional security engineering project. The Go service accepts normalized event records, evaluates a small explainable rule set, persists matching evidence, creates host-and-run incident groups, and serves an analyst dashboard. Six deterministic fictional exercises feed events through the same ingest route and detection code used by submitted telemetry.
 
-The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the page session. It has no service, sign-in, or persistent storage. Run the local Go service to exercise the backend event path and persistent analyst workflows.
+The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the browser. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to exercise the backend event path and server-side persistence.
 
 > **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, multi-user authentication, RBAC, mTLS, or production deployment configuration. PostgreSQL support does not make this a production service. The local JSON store and shared bearer token are development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
@@ -42,6 +42,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, process ancestry assembled only from available process IDs, network metadata view, detection catalog, and audit history.
 - Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, reset, result evaluation, and JSON report export.
+- Browser-only Pages replay state is saved per browser profile; local API mode persists through PostgreSQL or the local JSON development store.
 - Responsive dashboard with explicit live-submission versus simulated-data labeling.
 
 ## Event-to-alert path

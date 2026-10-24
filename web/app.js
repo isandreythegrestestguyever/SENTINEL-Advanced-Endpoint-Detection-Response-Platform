@@ -6,6 +6,40 @@ const state = {
 };
 const token = () => localStorage.getItem('sentinel-token') || '';
 const byId = (rows, id) => rows.find((row) => row.id === id);
+const demoStorageKey = 'sentinel-static-demo-v1';
+
+function persistDemo() {
+  if (!state.staticDemo) return;
+  try {
+    localStorage.setItem(demoStorageKey, JSON.stringify({
+      version: 1,
+      events: state.events,
+      alerts: state.alerts,
+      incidents: state.incidents,
+      audit: state.audit,
+      run: state.run,
+      selectedScenario: state.selectedScenario
+    }));
+  } catch (error) {
+    notify('Browser storage is full. Export the current run report before continuing.');
+  }
+}
+
+function restoreDemo() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(demoStorageKey) || 'null');
+    if (saved?.version !== 1) return;
+    state.events = Array.isArray(saved.events) ? saved.events : [];
+    state.alerts = Array.isArray(saved.alerts) ? saved.alerts : [];
+    state.incidents = Array.isArray(saved.incidents) ? saved.incidents : [];
+    state.audit = Array.isArray(saved.audit) ? saved.audit : [];
+    state.run = saved.run && typeof saved.run === 'object' ? saved.run : null;
+    if (typeof saved.selectedScenario === 'string') state.selectedScenario = saved.selectedScenario;
+    if (state.run) state.run.playing = false;
+  } catch {
+    localStorage.removeItem(demoStorageKey);
+  }
+}
 
 async function api(path, options = {}) {
   if (state.staticDemo) return demoAPI(path, options);
@@ -20,6 +54,7 @@ async function api(path, options = {}) {
       if (!response.ok) throw new Error('Static replay data is unavailable.');
       return response.json();
     });
+    restoreDemo();
     $('#operator-mode').textContent = 'BROWSER DEMO';
     $('#tokenBtn').hidden = true;
     $('#mode-pill').innerHTML = '<i></i> STATIC REPLAY';
@@ -39,7 +74,7 @@ function demoAPI(path, options = {}) {
   if (path === 'api/overview') return Promise.resolve({
     monitored_endpoints: new Set(state.events.filter((event) => !event.simulation_run_id).map((event) => event.host_id)).size,
     connected_sensors: 0, open_incidents: state.incidents.filter((item) => item.status === 'open' && !item.simulation_run_id).length,
-    events: state.events.length, alerts: state.alerts.length, mode: 'STATIC BROWSER DEMO · SESSION DATA ONLY'
+    events: state.events.length, alerts: state.alerts.length, mode: 'STATIC BROWSER DEMO · SAVED IN THIS BROWSER'
   });
   if (path === 'api/ingest' && options.method === 'POST') {
     const event = JSON.parse(options.body);
@@ -59,20 +94,21 @@ function demoAPI(path, options = {}) {
       incident.alert_ids.push(alert.id);incident.updated_at=new Date().toISOString();
     }
     state.audit.unshift({action:'event.ingested',event_id:event.id,time:new Date().toISOString()});
+    persistDemo();
     return Promise.resolve({accepted:true,event_id:event.id,alerts});
   }
   if (path.startsWith('api/alerts/') && options.method === 'PATCH') {
     const item=byId(state.alerts,decodeURIComponent(path.split('/').pop())); if(!item)throw new Error('Alert not found');
-    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes?{analyst_notes:patch.analyst_notes}:{},patch.assignee?{assignee:patch.assignee}:{},patch.status?{status:patch.status}:{});
-    state.audit.unshift({action:'alert.updated',alert_id:item.id,status:item.status,time:new Date().toISOString()});return Promise.resolve(item);
+    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes!==undefined?{analyst_notes:patch.analyst_notes}:{},patch.assignee!==undefined?{assignee:patch.assignee}:{},patch.status?{status:patch.status}:{});
+    state.audit.unshift({action:'alert.updated',alert_id:item.id,status:item.status,time:new Date().toISOString()});persistDemo();return Promise.resolve(item);
   }
   if (path.startsWith('api/incidents/') && options.method === 'PATCH') {
     const item=byId(state.incidents,decodeURIComponent(path.split('/').pop()));if(!item)throw new Error('Incident not found');
-    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes?{analyst_notes:patch.analyst_notes}:{},patch.status?{status:patch.status}:{});item.updated_at=new Date().toISOString();
-    state.audit.unshift({action:'incident.updated',incident_id:item.id,status:item.status,time:new Date().toISOString()});return Promise.resolve(item);
+    const patch=JSON.parse(options.body);Object.assign(item,patch.analyst_notes!==undefined?{analyst_notes:patch.analyst_notes}:{},patch.status?{status:patch.status}:{});item.updated_at=new Date().toISOString();
+    state.audit.unshift({action:'incident.updated',incident_id:item.id,status:item.status,time:new Date().toISOString()});persistDemo();return Promise.resolve(item);
   }
   if (path.startsWith('api/simulations/') && options.method === 'DELETE') {
-    const runID=decodeURIComponent(path.split('/').pop());state.events=state.events.filter((row)=>row.simulation_run_id!==runID);state.alerts=state.alerts.filter((row)=>row.simulation_run_id!==runID);state.incidents=state.incidents.filter((row)=>row.simulation_run_id!==runID);state.audit.unshift({action:'simulation.reset',run_id:runID,time:new Date().toISOString()});return Promise.resolve({reset:true,run_id:runID});
+    const runID=decodeURIComponent(path.split('/').pop());state.events=state.events.filter((row)=>row.simulation_run_id!==runID);state.alerts=state.alerts.filter((row)=>row.simulation_run_id!==runID);state.incidents=state.incidents.filter((row)=>row.simulation_run_id!==runID);state.audit.unshift({action:'simulation.reset',run_id:runID,time:new Date().toISOString()});persistDemo();return Promise.resolve({reset:true,run_id:runID});
   }
   return Promise.reject(new Error('This operation is unavailable in the static browser preview.'));
 }
@@ -160,11 +196,11 @@ function renderRange() {
   const techniques = [...new Set(scenario.expected_rule_ids.map((id) => byId(state.rules, id)?.technique).filter(Boolean))];
   const stream = visible.length ? visible.map((event) => `<div class="stream-event"><time>${new Date(event.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</time><span><b>${esc(event.type)}</b><small>${esc(event.hostname)} · ${esc(event.image || event.destination || event.user || 'metadata only')}</small></span></div>`).join('') : '<div class="empty-inline">Start the replay to ingest events one at a time.</div>';
   const resultsView = results ? `<div class="result-card ${results.success?'pass':'fail'}"><div class="result-state">${results.success?'SCENARIO PASSED':'SCENARIO FAILED'}</div><div class="result-stats"><div><small>RECALL</small><b>${results.recall===null?'N/A':Math.round(results.recall*100)+'%'}</b></div><div><small>PRECISION</small><b>${results.precision===null?'N/A':Math.round(results.precision*100)+'%'}</b></div><div><small>ALERTS</small><b>${results.alerts.length}</b></div></div><div class="scenario-meta">${results.detected.map((id)=>`<span>DETECTED ${esc(id)}</span>`).join('')}${results.missed.map((id)=>`<span class="missed">MISSED ${esc(id)}</span>`).join('')}</div><button class="text-link" data-action="export-report">EXPORT JSON REPORT ↓</button></div>` : `<div class="empty-inline">Results appear after the final event. Required: ${scenario.expected_rule_ids.map(esc).join(', ')}.</div>`;
-  return `${pageHead('VALIDATION / REPLAY LAB', 'Sentinel Range', 'Replay curated telemetry one event at a time through the same ingest and detection path.', '<span class="source-tag sim">SIMULATION ONLY</span>')}
+  return `${pageHead('VALIDATION / REPLAY LAB', 'Sentinel Range', 'Replay curated telemetry one event at a time through the same ingest and detection path. GitHub Pages saves run data in this browser profile.', '<span class="source-tag sim">SIMULATION ONLY</span>')}
     <div class="range-layout">
       <section class="panel">${panelHead('Scenario library', `${state.scenarios.length} DETERMINISTIC EXERCISES`)}<div class="scenario-picker">${state.scenarios.map((item, index) => `<button class="scenario-option ${item.id===scenario.id?'active':''}" data-scenario="${esc(item.id)}"><span class="scenario-index">${String(index+1).padStart(2,'0')}</span><span><strong>${esc(item.name)}</strong><small>${esc(item.summary)}</small></span></button>`).join('')}</div></section>
       <section class="panel"><div class="scenario-detail"><div class="eyebrow">${esc(scenario.id)} / OBJECTIVES</div><h2>${esc(scenario.name)}</h2><p>${esc(scenario.summary)} This replay creates records only; no commands, file changes, credentials, or network connections are executed.</p><div class="scenario-meta"><span>${scenario.events.length} FIXTURE EVENTS</span><span>${scenario.expected_rule_ids.length} REQUIRED DETECTIONS</span><span>FIXTURE VERSION 1.0</span>${techniques.map((technique)=>`<span>ATT&CK ${esc(technique)}</span>`).join('')}</div></div>
-      <div class="scenario-controls"><button class="button primary" data-action="start-run" ${run?.playing?'disabled':''}>${run?.playing?'REPLAY RUNNING':run&&run.index<scenario.events.length?'RESUME REPLAY':'START REPLAY'}</button><button class="button" data-action="pause-run" ${!run?.playing?'disabled':''}>PAUSE</button><button class="button" data-action="reset-run" ${!run?'disabled':''}>RESET RUN</button><select id="run-speed" aria-label="Replay speed"><option value="1200">1×</option><option value="600">2×</option><option value="250">4×</option></select></div>
+      <div class="scenario-controls"><button class="button primary" data-action="start-run" ${run?.playing?'disabled':''}>${run?.playing?'REPLAY RUNNING':run&&run.index<scenario.events.length?'RESUME REPLAY':'START REPLAY'}</button><button class="button" data-action="pause-run" ${!run?.playing?'disabled':''}>PAUSE</button><button class="button" data-action="export-run" ${!run?'disabled':''}>EXPORT RUN DATA</button><button class="button" data-action="reset-run" ${!run?'disabled':''}>RESET RUN</button><select id="run-speed" aria-label="Replay speed"><option value="1200">1×</option><option value="600">2×</option><option value="250">4×</option></select></div>
       ${run?`<div class="run-progress"><span>RUN ${esc(run.id)}</span><span>${Math.min(run.index,scenario.events.length)} / ${scenario.events.length} EVENTS INGESTED</span></div><div class="progress-track"><i style="width:${Math.min(100,run.index/scenario.events.length*100)}%"></i></div>`:''}
       <div class="range-columns"><div>${panelHead('Telemetry stream', `${visible.length} EVENTS INGESTED`)}<div class="stream-list">${stream}</div></div><div>${panelHead('Run results', results ? (results.success?'ALL ASSERTIONS MET':'ASSERTION FAILED') : 'WAITING FOR COMPLETION')}${resultsView}</div></div></section>
     </div>
@@ -172,19 +208,19 @@ function renderRange() {
 }
 function syncRangeControls(){const control=$('#run-speed');if(control&&state.run)control.value=String(state.run.speed)}
 
-async function startRun(){if(state.run?.playing)return;const scenario=state.scenarios.find((s)=>s.id===state.selectedScenario)||state.scenarios[0];if(!scenario)return;if(!state.staticDemo&&!token()){notify('Set the local analyst token before starting a replay.');return}if(state.run?.scenario.id===scenario.id&&state.run.index<scenario.events.length){state.run.playing=true;state.run.speed=Number($('#run-speed')?.value||state.run.speed);render();await tickRun();return}state.run={id:`SIM-${Date.now()}`,scenario,events:[],alerts:[],index:0,playing:true,speed:Number($('#run-speed')?.value||1200),report:null};render();await tickRun()}
-async function tickRun(){const run=state.run;if(!run||!run.playing)return;if(run.index>=run.scenario.events.length){finishRun();return}const fixture=run.scenario.events[run.index];const event={...fixture,id:`${run.id}-${fixture.id}`,time:new Date(Date.now()+run.index*1000).toISOString(),simulation_run_id:run.id};try{const result=await api('api/ingest',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(event)});run.events.push(event);run.alerts.push(...result.alerts);run.index++;await refreshData();if(run.index>=run.scenario.events.length){finishRun();return}if(run.playing)state.timer=setTimeout(tickRun,run.speed)}catch(error){run.playing=false;render();notify(`Replay stopped: ${error.message}`)}}
-function finishRun(){const run=state.run;if(!run)return;const matched=new Set(run.alerts.map((alert)=>alert.rule_id));const detected=run.scenario.expected_rule_ids.filter((id)=>matched.has(id));const missed=run.scenario.expected_rule_ids.filter((id)=>!matched.has(id));const unexpected=[...new Set(run.alerts.map((alert)=>alert.rule_id))].filter((id)=>!run.scenario.expected_rule_ids.includes(id));run.playing=false;run.report={scenario:run.scenario.name,scenario_id:run.scenario.id,scenario_version:'1.0',dataset_version:'1.0',rule_set_version:'1',simulation_seed:'deterministic-fixture-v1',run_id:run.id,event_count:run.events.length,expected_alerts:run.scenario.expected_rule_ids,detected,missed,unexpected,success:missed.length===0,recall:run.scenario.expected_rule_ids.length?detected.length/run.scenario.expected_rule_ids.length:null,precision:detected.length+unexpected.length?detected.length/(detected.length+unexpected.length):null,alerts:run.alerts,processing_errors:[]};render();notify(run.report.success?'Replay completed. All mandatory detections matched.':'Replay completed with missed detections.')}
-async function resetRun(){if(state.timer)clearTimeout(state.timer);const run=state.run;if(run){try{await api(`api/simulations/${encodeURIComponent(run.id)}`,{method:'DELETE',headers:{Authorization:`Bearer ${token()}`}})}catch(error){notify(error.message);return}}state.run=null;await refreshData();render();notify('Replay records for this run were removed.')}
+async function startRun(){if(state.run?.playing)return;const scenario=state.scenarios.find((s)=>s.id===state.selectedScenario)||state.scenarios[0];if(!scenario)return;if(!state.staticDemo&&!token()){notify('Set the local analyst token before starting a replay.');return}if(state.run?.scenario.id===scenario.id&&state.run.index<scenario.events.length){state.run.playing=true;state.run.speed=Number($('#run-speed')?.value||state.run.speed);persistDemo();render();await tickRun();return}state.run={id:`SIM-${Date.now()}`,scenario,events:[],alerts:[],index:0,playing:true,speed:Number($('#run-speed')?.value||1200),report:null};persistDemo();render();await tickRun()}
+async function tickRun(){const run=state.run;if(!run||!run.playing)return;if(run.index>=run.scenario.events.length){finishRun();return}const fixture=run.scenario.events[run.index];const event={...fixture,id:`${run.id}-${fixture.id}`,time:new Date(Date.now()+run.index*1000).toISOString(),simulation_run_id:run.id};try{const result=await api('api/ingest',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(event)});run.events.push(event);run.alerts.push(...result.alerts);run.index++;persistDemo();await refreshData();if(run.index>=run.scenario.events.length){finishRun();return}if(run.playing)state.timer=setTimeout(tickRun,run.speed)}catch(error){run.playing=false;persistDemo();render();notify(`Replay stopped: ${error.message}`)}}
+function finishRun(){const run=state.run;if(!run)return;const matched=new Set(run.alerts.map((alert)=>alert.rule_id));const detected=run.scenario.expected_rule_ids.filter((id)=>matched.has(id));const missed=run.scenario.expected_rule_ids.filter((id)=>!matched.has(id));const unexpected=[...new Set(run.alerts.map((alert)=>alert.rule_id))].filter((id)=>!run.scenario.expected_rule_ids.includes(id));run.playing=false;run.report={scenario:run.scenario.name,scenario_id:run.scenario.id,scenario_version:'1.0',dataset_version:'1.0',rule_set_version:'1',simulation_seed:'deterministic-fixture-v1',run_id:run.id,event_count:run.events.length,expected_alerts:run.scenario.expected_rule_ids,detected,missed,unexpected,success:missed.length===0,recall:run.scenario.expected_rule_ids.length?detected.length/run.scenario.expected_rule_ids.length:null,precision:detected.length+unexpected.length?detected.length/(detected.length+unexpected.length):null,alerts:run.alerts,processing_errors:[]};persistDemo();render();notify(run.report.success?'Replay completed. All mandatory detections matched.':'Replay completed with missed detections.')}
+async function resetRun(){if(state.timer)clearTimeout(state.timer);const run=state.run;if(run){try{await api(`api/simulations/${encodeURIComponent(run.id)}`,{method:'DELETE',headers:{Authorization:`Bearer ${token()}`}})}catch(error){notify(error.message);return}}state.run=null;persistDemo();await refreshData();render();notify('Replay records for this run were removed.')}
 
 function navigate(view){if(!view)return;state.view=view;render();window.location.hash=view}
 function notify(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('show');clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.classList.remove('show'),2800)}
 async function mutate(path,body,method='PATCH'){if(!state.staticDemo&&!token()){notify('Set the analyst token to save this update.');return}try{await api(path,{method,headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(body)});await refreshData();notify('Update saved and recorded in the audit log.')}catch(error){notify(error.message)}}
-function bind(){document.addEventListener('click',async(event)=>{const nav=event.target.closest('[data-view],[data-nav]');if(nav){navigate(nav.dataset.view||nav.dataset.nav);return}const scenario=event.target.closest('[data-scenario],[data-launch]');if(scenario){const nextScenario=scenario.dataset.scenario||scenario.dataset.launch;if(state.run?.playing&&state.run.scenario.id!==nextScenario){notify('Pause the active replay before switching scenarios.');return}state.selectedScenario=nextScenario;if(state.run?.scenario.id!==state.selectedScenario)state.run=null;navigate('range');return}const alert=event.target.closest('[data-alert]');if(alert){state.selectedAlert=alert.dataset.alert;render();return}const incident=event.target.closest('[data-incident]');if(incident){state.selectedIncident=incident.dataset.incident;render();return}const host=event.target.closest('[data-host]');if(host){state.filters.processHost=host.dataset.host;navigate('processes');return}const test=event.target.closest('[data-test-rule]');if(test){const rule=byId(state.rules,test.dataset.testRule);const matches=state.events.filter((e)=>String(e[rule.field]||'').toLowerCase().includes(rule.contains.toLowerCase()));notify(`${rule.id}: ${matches.length} matching event(s) in loaded data.`);return}const action=event.target.closest('[data-action]');if(!action)return;const id=action.dataset.id;switch(action.dataset.action){case'clear-filters':state.filters={severity:'all',status:'all',query:''};render();break;case'ack-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'acknowledged'});break;case'close-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'closed'});break;case'save-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{analyst_notes:$('#alert-note').value,assignee:$('#alert-assignee').value});break;case'save-case':await mutate(`api/incidents/${encodeURIComponent(id)}`,{status:$('#case-status').value,analyst_notes:$('#case-note').value});break;case'start-run':await startRun();break;case'pause-run':if(state.timer)clearTimeout(state.timer);if(state.run){state.run.playing=false;render()}break;case'reset-run':await resetRun();break;case'export-report':if(state.run?.report)download(state.run.report);break;case'export-case':{const incident=byId(state.incidents,id);if(incident){const alerts=incident.alert_ids.map((alertId)=>byId(state.alerts,alertId)).filter(Boolean);const events=alerts.flatMap((alert)=>alert.event_ids.map((eventId)=>state.events.find((item)=>item.id===eventId)).filter(Boolean));download({exported_at:new Date().toISOString(),incident,alerts,events})}break}}});
+function bind(){document.addEventListener('click',async(event)=>{const nav=event.target.closest('[data-view],[data-nav]');if(nav){navigate(nav.dataset.view||nav.dataset.nav);return}const scenario=event.target.closest('[data-scenario],[data-launch]');if(scenario){const nextScenario=scenario.dataset.scenario||scenario.dataset.launch;if(state.run?.playing&&state.run.scenario.id!==nextScenario){notify('Pause the active replay before switching scenarios.');return}state.selectedScenario=nextScenario;if(state.run?.scenario.id!==state.selectedScenario)state.run=null;persistDemo();navigate('range');return}const alert=event.target.closest('[data-alert]');if(alert){state.selectedAlert=alert.dataset.alert;render();return}const incident=event.target.closest('[data-incident]');if(incident){state.selectedIncident=incident.dataset.incident;render();return}const host=event.target.closest('[data-host]');if(host){state.filters.processHost=host.dataset.host;navigate('processes');return}const test=event.target.closest('[data-test-rule]');if(test){const rule=byId(state.rules,test.dataset.testRule);const matches=state.events.filter((e)=>String(e[rule.field]||'').toLowerCase().includes(rule.contains.toLowerCase()));notify(`${rule.id}: ${matches.length} matching event(s) in loaded data.`);return}const action=event.target.closest('[data-action]');if(!action)return;const id=action.dataset.id;switch(action.dataset.action){case'clear-filters':state.filters={severity:'all',status:'all',query:''};render();break;case'ack-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'acknowledged'});break;case'close-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'closed'});break;case'save-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{analyst_notes:$('#alert-note').value,assignee:$('#alert-assignee').value});break;case'save-case':await mutate(`api/incidents/${encodeURIComponent(id)}`,{status:$('#case-status').value,analyst_notes:$('#case-note').value});break;case'start-run':await startRun();break;case'pause-run':if(state.timer)clearTimeout(state.timer);if(state.run){state.run.playing=false;persistDemo();render()}break;case'reset-run':await resetRun();break;case'export-run':if(state.run)download({exported_at:new Date().toISOString(),namespace:'simulation',simulation_only:true,run:state.run,events:state.events.filter((item)=>item.simulation_run_id===state.run.id),alerts:state.alerts.filter((item)=>item.simulation_run_id===state.run.id),incidents:state.incidents.filter((item)=>item.simulation_run_id===state.run.id)});break;case'export-report':if(state.run?.report)download(state.run.report);break;case'export-case':{const incident=byId(state.incidents,id);if(incident){const alerts=incident.alert_ids.map((alertId)=>byId(state.alerts,alertId)).filter(Boolean);const events=alerts.flatMap((alert)=>alert.event_ids.map((eventId)=>state.events.find((item)=>item.id===eventId)).filter(Boolean));download({exported_at:new Date().toISOString(),incident,alerts,events})}break}}});
   document.addEventListener('input',(event)=>{if(event.target.id==='alert-search'){state.filters.query=event.target.value;const position=event.target.selectionStart;render();const input=$('#alert-search');input.focus();input.setSelectionRange(position,position)}});
   document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
 }
-function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id}.json`;anchor.click();URL.revokeObjectURL(anchor.href)}
+function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id||report.run?.id||report.incident?.id||'export'}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(anchor.href),1000)}
 $('#tokenBtn').onclick=()=>{const value=prompt('Paste the analyst token printed when the local server started. It stays in this browser.');if(value){localStorage.setItem('sentinel-token',value.trim());$('#operator-mode').textContent='TOKEN SAVED';notify('Local analyst token saved in this browser.')}};
 $('#refresh').onclick=()=>refreshData().catch((error)=>notify(error.message));
 $('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`;setInterval(()=>$('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`,1000);

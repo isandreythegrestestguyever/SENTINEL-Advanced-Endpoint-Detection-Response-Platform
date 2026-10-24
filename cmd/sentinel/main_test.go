@@ -89,6 +89,20 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 }
 
+func TestAuthRequiresBearerScheme(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	for _, value := range []string{"", "test-token", "Bearer ", "Bearer wrong"} {
+		request.Header.Set("Authorization", value)
+		if auth(request, "test-token") {
+			t.Errorf("auth accepted invalid authorization value %q", value)
+		}
+	}
+	request.Header.Set("Authorization", "Bearer test-token")
+	if !auth(request, "test-token") {
+		t.Fatal("auth rejected a valid bearer token")
+	}
+}
+
 func TestIngestTriggersBoundedAuthenticationCorrelation(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
 	if err != nil {

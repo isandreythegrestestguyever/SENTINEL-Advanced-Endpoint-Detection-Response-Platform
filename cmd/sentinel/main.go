@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -377,7 +378,12 @@ func valid(e model.Event) string {
 	return ""
 }
 func auth(r *http.Request, t string) bool {
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == t && r.Header.Get("Authorization") != ""
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) || len(header) == len(prefix) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, prefix)), []byte(t)) == 1
 }
 func headers(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

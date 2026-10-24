@@ -27,4 +27,4 @@ These exercise labels describe synthetic telemetry only. Authentication, file-ch
 
 ## GitHub Pages preview
 
-The Pages workflow exports rules and scenarios from the Go packages. The page evaluates those definitions locally in browser memory. This preview has no backend, authentication, or persistent state. Local Go mode is the end-to-end event-to-alert path.
+The Pages workflow exports rules and scenarios from the Go packages. The page evaluates those definitions in the browser and saves generated events, alerts, notes, reports, and audit entries in this browser profile's `localStorage`. Reloading the page preserves those run results; clearing browser data or using another browser profile does not. This preview has no backend or authentication. Local Go mode is the server-side event-to-alert path.
