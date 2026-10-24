@@ -91,7 +91,7 @@ async function refreshData() {
   $('#fleet-count').textContent=endpoints.length;$('#alert-count').textContent=alerts.filter((a)=>a.status==='open').length;$('#incident-count').textContent=incidents.filter((i)=>i.status!=='resolved').length;
   $('#boundary-title').textContent=endpoints.some((e)=>!e.simulated)?'LIVE HOST TELEMETRY RECEIVED':'NO LIVE SENSORS CONNECTED';
   $('#boundary-copy').textContent=endpoints.some((e)=>!e.simulated)?'Observed events are stored separately from replay runs. This build has no response actions.':'This instance contains no Windows sensor. Replay telemetry is synthetic, labeled, and isolated by run ID.';
-  $('#side-status span').textContent=state.staticDemo?'STATIC DEMO':'LOCAL CONTROL PLANE';
+  $('.side-status span').textContent=state.staticDemo?'STATIC DEMO':'LOCAL CONTROL PLANE';
   render();
 }
 
