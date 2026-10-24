@@ -222,7 +222,7 @@ func insertAlert(ctx context.Context, tx pgx.Tx, alert model.Alert) error {
 }
 
 func attachAlertToIncident(ctx context.Context, tx pgx.Tx, alert model.Alert) error {
-	lockID := alert.HostID + "\x00" + alert.SimulationRunID
+	lockID := fmt.Sprintf("%d:%s:%s", len(alert.HostID), alert.HostID, alert.SimulationRunID)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockID); err != nil {
 		return err
 	}
