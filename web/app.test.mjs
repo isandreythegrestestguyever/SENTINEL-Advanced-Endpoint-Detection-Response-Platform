@@ -127,6 +127,81 @@ test('simulation archive preserves saved runs and excludes live records', async 
   assert.equal(archive.active_run.run_id, 'SIM-1');
 });
 
+test('simulation archive import adds records and reports without replacing existing browser data', () => {
+  const storage = new Map();
+  const context = startApp(storage);
+  vm.runInContext(`Object.assign(state,{
+    staticDemo:true,
+    events:[{id:'EXISTING-E1',simulation_run_id:'SIM-OLD'}],
+    alerts:[{id:'EXISTING-A1',simulation_run_id:'SIM-OLD'}],
+    incidents:[],audit:[{action:'simulation.reset',run_id:'SIM-OLD'}],
+    runHistory:[{run_id:'SIM-OLD',scenario_id:'S01',success:true}]
+  })`, context);
+  assert.throws(() => vm.runInContext(`importSimulationArchive({format:'sentinel-simulation-archive',schema_version:'1.0',simulation_only:true,events:[{id:'LIVE-E1'}]})`, context), /simulation identifiers/);
+  const result = vm.runInContext(`importSimulationArchive({
+    format:'sentinel-simulation-archive',schema_version:'1.0',simulation_only:true,
+    events:[{id:'NEW-E1',simulation_run_id:'SIM-NEW'}],
+    alerts:[{id:'NEW-A1',simulation_run_id:'SIM-NEW'}],
+    incidents:[{id:'NEW-I1',simulation_run_id:'SIM-NEW'}],
+    audit:[{action:'event.ingested',event_id:'NEW-E1'},{action:'event.ingested',event_id:'UNRELATED-LIVE'}],
+    completed_runs:[{run_id:'SIM-NEW',scenario_id:'S02',success:true}]
+  })`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {events:1,alerts:1,incidents:1,reports:1});
+  const state = JSON.parse(vm.runInContext(`JSON.stringify({events:state.events,alerts:state.alerts,incidents:state.incidents,audit:state.audit,runHistory:state.runHistory})`, context));
+  assert.deepEqual(state.events.map((event) => event.id), ['EXISTING-E1','NEW-E1']);
+  assert.deepEqual(state.alerts.map((alert) => alert.id), ['EXISTING-A1','NEW-A1']);
+  assert.deepEqual(state.incidents.map((incident) => incident.id), ['NEW-I1']);
+  assert.equal(state.audit.some((entry) => entry.event_id === 'UNRELATED-LIVE'), false);
+  assert.equal(state.runHistory.length, 2);
+  assert.ok(storage.has('sentinel-static-demo-v1'));
+});
+
+test('simulation archive restores a paused replay without starting it', () => {
+  const context = startApp(new Map());
+  vm.runInContext(`Object.assign(state,{
+    staticDemo:true,
+    scenarios:[{id:'S01',events:[{id:'E1'},{id:'E2'}]}],
+    events:[],alerts:[],incidents:[],audit:[],runHistory:[]
+  })`, context);
+  vm.runInContext(`importSimulationArchive({
+    format:'sentinel-simulation-archive',schema_version:'1.0',simulation_only:true,
+    active_run:{run_id:'SIM-PAUSED',scenario_id:'S01',index:1,cursor:1,playing:true,report:null},
+    events:[{id:'SIM-PAUSED-E1',simulation_run_id:'SIM-PAUSED'}],alerts:[],incidents:[],completed_runs:[],audit:[]
+  })`, context);
+  const restored = JSON.parse(vm.runInContext(`JSON.stringify({id:state.run.id,index:state.run.index,cursor:state.run.cursor,playing:state.run.playing,events:state.run.events.map(event=>event.id)})`, context));
+  assert.deepEqual(restored, {id:'SIM-PAUSED',index:1,cursor:1,playing:false,events:['SIM-PAUSED-E1']});
+});
+
+test('failed archive persistence rolls back imported state and preserves the saved bytes', () => {
+  class QuotaMap extends Map {
+    failWrites = false;
+    set(key, value) {
+      if (this.failWrites) throw new Error('Quota exceeded');
+      return super.set(key, value);
+    }
+  }
+  const storage = new QuotaMap();
+  const context = startApp(storage);
+  vm.runInContext(`Object.assign(state,{staticDemo:true,events:[{id:'OLD-E1',simulation_run_id:'SIM-OLD'}],alerts:[],incidents:[],audit:[],runHistory:[]})`, context);
+  const original = JSON.stringify({existing:'saved bytes'});
+  storage.set('sentinel-static-demo-v1', original);
+  storage.failWrites = true;
+  assert.throws(() => vm.runInContext(`importSimulationArchive({
+    format:'sentinel-simulation-archive',schema_version:'1.0',simulation_only:true,
+    events:[{id:'NEW-E1',simulation_run_id:'SIM-NEW'}],alerts:[],incidents:[],completed_runs:[],audit:[]
+  })`, context), /prior records remain in place/);
+  assert.equal(storage.get('sentinel-static-demo-v1'), original);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(state.events.map(event=>event.id))', context)), ['OLD-E1']);
+});
+
+test('unreadable saved browser data is left in place for recovery', () => {
+  const original = '{not valid JSON';
+  const storage = new Map([['sentinel-static-demo-v1', original]]);
+  const context = startApp(storage);
+  vm.runInContext('restoreDemo()', context);
+  assert.equal(storage.get('sentinel-static-demo-v1'), original);
+});
+
 test('browser replay evaluator meets every Go-exported scenario assertion', () => {
   const exported = execFileSync('go', ['run', './cmd/export-demo'], {
     cwd: repositoryRoot,

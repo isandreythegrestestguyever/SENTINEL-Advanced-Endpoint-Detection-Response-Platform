@@ -20,6 +20,27 @@
 .topology-node small{color:#8a9993;font:7px var(--mono);letter-spacing:.45px}
 .topology-node b{color:#dce6e1;font:10px var(--mono);overflow-wrap:anywhere}
 .topology-node span,.topology-empty{color:#82908d;font-size:8px}
+
+/* Keep the dark console calm while making the information easier to scan. */
+body{font-size:14px;line-height:1.5}
+.side-status,.nav-label,.operator-chip,.breadcrumbs,.mode-pill,.utc-clock{letter-spacing:.35px}
+.side-status i,.mode-pill i{box-shadow:none}
+.nav-item{font-size:12px}
+.nav-item.selected{border-left:2px solid var(--green)}
+.page-head p,.scenario-detail p{font-size:12px;line-height:1.65}
+.eyebrow{font-size:10px;letter-spacing:.75px}
+.metric-label{font-size:10px;letter-spacing:.25px}
+.metric-value{font-size:28px}
+.panel-title{font-size:14px}
+th{font-size:9px;letter-spacing:.3px}
+td{font-size:11px}
+.cell-main{font-size:11px}
+.cell-sub{font-size:10px}
+.button,.banner-action{font-size:10px;letter-spacing:.2px}
+.text-link{font-size:10px}
+.footer{font-size:9px;letter-spacing:.25px}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+@media(max-width:760px){.page-head p,.scenario-detail p{font-size:11px}.metric-value{font-size:23px}.footer{font-size:8px}.nav-item,.nav-item.selected{font-size:0}}
 .topology-paths{display:grid;gap:7px}
 .topology-path{display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:7px}
 .topology-link{height:1px;background:#557e62;position:relative}

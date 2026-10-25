@@ -10,7 +10,7 @@ const byId = (rows, id) => rows.find((row) => row.id === id);
 const demoStorageKey = 'sentinel-static-demo-v1';
 
 function persistDemo() {
-  if (!state.staticDemo) return;
+  if (!state.staticDemo) return false;
   try {
     localStorage.setItem(demoStorageKey, JSON.stringify({
       version: 1,
@@ -22,8 +22,10 @@ function persistDemo() {
       runHistory: state.runHistory,
       selectedScenario: state.selectedScenario
     }));
+    return true;
   } catch (error) {
     notify('Browser storage is full. Export the current run report before continuing.');
+    return false;
   }
 }
 
@@ -40,7 +42,7 @@ function restoreDemo() {
     if (typeof saved.selectedScenario === 'string') state.selectedScenario = saved.selectedScenario;
     if (state.run) state.run.playing = false;
   } catch {
-    localStorage.removeItem(demoStorageKey);
+    notify('Saved replay data could not be read. The original browser data was left untouched.');
   }
 }
 
@@ -215,6 +217,49 @@ async function buildSimulationArchive(){
   };
 }
 
+function importSimulationArchive(archive){
+  if(!state.staticDemo)throw new Error('Archive import is available only in the browser simulation.');
+  if(archive?.format!=='sentinel-simulation-archive'||archive.schema_version!=='1.0'||archive.simulation_only!==true)throw new Error('This is not a supported simulation-only archive.');
+  const list=(key)=>{const rows=archive[key]??[];if(!Array.isArray(rows)||rows.length>100000)throw new Error(`The ${key} list is invalid or too large.`);return rows};
+  const events=list('events'),alerts=list('alerts'),incidents=list('incidents'),reports=list('completed_runs'),audit=list('audit');
+  if(events.some((item)=>!item?.id||!item.simulation_run_id)||alerts.some((item)=>!item?.id||!item.simulation_run_id)||incidents.some((item)=>!item?.id||!item.simulation_run_id)||reports.some((item)=>!item?.run_id))throw new Error('The archive contains records without simulation identifiers.');
+  const eventIDs=new Set(events.map((item)=>item.id)),alertIDs=new Set(alerts.map((item)=>item.id)),incidentIDs=new Set(incidents.map((item)=>item.id));
+  const runIDs=new Set([...events.map((item)=>item.simulation_run_id),...alerts.map((item)=>item.simulation_run_id),...incidents.map((item)=>item.simulation_run_id),...reports.map((item)=>item.run_id)]);
+  const safeAudit=audit.filter((entry)=>entry&&typeof entry==='object'&&(entry.action==='simulation.reset'?runIDs.has(entry.run_id):eventIDs.has(entry.event_id)||alertIDs.has(entry.alert_id)||incidentIDs.has(entry.incident_id)||runIDs.has(entry.simulation_run_id)));
+  const activeReport=archive.active_run?.report?.run_id?archive.active_run.report:null;
+  const active=archive.active_run&&!activeReport?archive.active_run:null;
+  const activeScenario=active?state.scenarios.find((item)=>item.id===active.scenario_id):null;
+  if(active&&(!active.run_id||!activeScenario||!Number.isInteger(active.index)||active.index<0||active.index>activeScenario.events.length||!Number.isInteger(active.cursor)||active.cursor<0||active.cursor>active.index))throw new Error('The archive contains an invalid or unavailable active replay.');
+  if(active&&state.run?.id!==active.run_id&&state.run&&!state.run.report&&state.run.index<state.run.scenario.events.length)throw new Error('Finish or reset the current replay before importing a different active replay. Its events are preserved.');
+  const next={
+    events:mergeByID(state.events,events,'id'),
+    alerts:mergeByID(state.alerts,alerts,'id'),
+    incidents:mergeByID(state.incidents,incidents,'id'),
+    runHistory:mergeByID(state.runHistory,[...reports,...(activeReport?[activeReport]:[]),...(state.run?.report?[state.run.report]:[])],'run_id'),
+    audit:mergeByJSON(state.audit,safeAudit)
+  };
+  if(active)next.run={id:active.run_id,scenario:activeScenario,events:events.filter((item)=>item.simulation_run_id===active.run_id),alerts:alerts.filter((item)=>item.simulation_run_id===active.run_id),index:active.index,cursor:active.cursor,playing:false,speed:1200,report:null};
+  const previous={events:state.events,alerts:state.alerts,incidents:state.incidents,runHistory:state.runHistory,audit:state.audit,run:state.run};
+  Object.assign(state,next);
+  if(!persistDemo()){
+    Object.assign(state,previous);
+    throw new Error('Browser storage could not save this archive. Your prior records remain in place.');
+  }
+  return {events:events.length,alerts:alerts.length,incidents:incidents.length,reports:reports.length+(activeReport?1:0)};
+}
+
+function mergeByID(current,incoming,key){
+  const merged=new Map(current.map((item)=>[item[key],item]));
+  for(const item of incoming)if(!merged.has(item[key]))merged.set(item[key],item);
+  return [...merged.values()];
+}
+
+function mergeByJSON(current,incoming){
+  const merged=new Map(current.map((item)=>[JSON.stringify(item),item]));
+  for(const item of incoming)merged.set(JSON.stringify(item),item);
+  return [...merged.values()];
+}
+
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtTime=(value)=>{if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':date.toLocaleString(undefined,{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})};
 const sevClass=(value)=>`severity-tag ${esc(String(value||'').toLowerCase())}`;
@@ -329,7 +374,7 @@ function renderRange() {
     : 'Replay curated records through the Go ingest and detection service. Simulated records stay isolated by run ID.';
   const groundTruth = groundTruthTechniques.map((technique) => `<span>GROUND TRUTH · ${esc(technique)}</span>`).join('') || '<span>GROUND TRUTH · NOT TAGGED</span>';
   const detected = detectedTechniques.map((technique) => `<span>RULE MATCH · ${esc(technique)}</span>`).join('') || '<span>RULE MATCH · NONE YET</span>';
-  const archiveAction='<span class="source-tag sim">SIMULATION ONLY</span><button class="button" data-action="export-simulation-archive">EXPORT ALL SIM DATA</button>';
+  const archiveAction=`<span class="source-tag sim">SIMULATION ONLY</span><button class="button" data-action="export-simulation-archive">EXPORT ALL SIM DATA</button>${state.staticDemo?'<button class="button" data-action="import-simulation-archive">IMPORT SIM DATA</button><input id="simulation-archive-file" type="file" accept="application/json,.json" hidden>':''}`;
   return `${pageHead('VALIDATION / REPLAY LAB', 'Sentinel Range', modeCopy, archiveAction)}
     <div class="range-layout">
       <section class="panel">${panelHead('Scenario library', `${state.scenarios.length} DETERMINISTIC EXERCISES`)}<div class="scenario-picker">${state.scenarios.map((item, index) => `<button class="scenario-option ${item.id===scenario.id?'active':''}" data-scenario="${esc(item.id)}"><span class="scenario-index">${String(index+1).padStart(2,'0')}</span><span><strong>${esc(item.name)}</strong><small>${esc(item.summary)}</small></span></button>`).join('')}</div></section>
@@ -351,7 +396,7 @@ async function resetRun(){if(state.timer)clearTimeout(state.timer);const run=sta
 function navigate(view){if(!view)return;state.view=view;render();window.location.hash=view}
 function notify(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('show');clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.classList.remove('show'),2800)}
 async function mutate(path,body,method='PATCH'){if(!state.staticDemo&&!token()){notify('Set the analyst token to save this update.');return}try{await api(path,{method,headers:{'Content-Type':'application/json','Authorization':`Bearer ${token()}`},body:JSON.stringify(body)});await refreshData();notify('Update saved and recorded in the audit log.')}catch(error){notify(error.message)}}
-function bind(){document.addEventListener('click',(event)=>{const action=event.target.closest('[data-action="view-run-report"]');if(action&&state.run&&!state.run.report){event.preventDefault();event.stopImmediatePropagation();notify('Finish or reset the active replay before opening a saved report. Its events are preserved.')}},true);document.addEventListener('click',async(event)=>{const nav=event.target.closest('[data-view],[data-nav]');if(nav){navigate(nav.dataset.view||nav.dataset.nav);return}const scenario=event.target.closest('[data-scenario],[data-launch]');if(scenario){const nextScenario=scenario.dataset.scenario||scenario.dataset.launch;if(state.run&&state.run.scenario.id!==nextScenario){if(state.run.index<state.run.scenario.events.length){notify('Finish or reset the active replay before switching scenarios. Its events are preserved.');return}if(state.run.report&&!state.runHistory.some((item)=>item.run_id===state.run.id))state.runHistory.push(state.run.report);state.run=null}state.selectedScenario=nextScenario;state.selectedReportRunId=null;persistDemo();navigate('range');return}const alert=event.target.closest('[data-alert]');if(alert){state.selectedAlert=alert.dataset.alert;render();return}const incident=event.target.closest('[data-incident]');if(incident){state.selectedIncident=incident.dataset.incident;render();return}const process=event.target.closest('[data-process-pid]');if(process){state.selectedProcessPID=Number(process.dataset.processPid);render();return}const host=event.target.closest('[data-host]');if(host){state.filters.processHost=host.dataset.host;state.selectedProcessPID=null;navigate('processes');return}const test=event.target.closest('[data-test-rule]');if(test){const rule=byId(state.rules,test.dataset.testRule);const findings=evaluateLoadedRule(rule,state.events);notify(`${rule.id}: ${findings.length} finding(s) if evaluated against the loaded records. No records were changed.`);return}const action=event.target.closest('[data-action]');if(!action)return;const id=action.dataset.id;switch(action.dataset.action){case'export-simulation-archive':try{download(await buildSimulationArchive());notify('Simulation archive exported.')}catch(error){notify(`Could not export simulation data: ${error.message}`)}break;case'load-older-events':await loadOlderEvents();break;case'clear-filters':state.filters={severity:'all',status:'all',query:''};render();break;case'ack-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'acknowledged'});break;case'close-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'closed'});break;case'save-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{analyst_notes:$('#alert-note').value,assignee:$('#alert-assignee').value});break;case'save-case':await mutate(`api/incidents/${encodeURIComponent(id)}`,{status:$('#case-status').value,analyst_notes:$('#case-note').value});break;case'start-run':await startRun();break;case'pause-run':if(state.timer)clearTimeout(state.timer);if(state.run){state.run.playing=false;persistDemo();render()}break;case'reset-run':await resetRun();break;case'view-run-report':{const report=state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report){if(state.run?.playing){notify('Pause the active replay before opening a saved report.');break}if(state.run?.report&&!state.runHistory.some((item)=>item.run_id===state.run.id))state.runHistory.push(state.run.report);state.run=null;state.selectedScenario=report.scenario_id;state.selectedReportRunId=report.run_id;persistDemo();navigate('range')}break}case'export-run':if(state.run)download({exported_at:new Date().toISOString(),namespace:'simulation',simulation_only:true,run:state.run,events:state.events.filter((item)=>item.simulation_run_id===state.run.id),alerts:state.alerts.filter((item)=>item.simulation_run_id===state.run.id),incidents:state.incidents.filter((item)=>item.simulation_run_id===state.run.id)});break;case'export-report':{const report=state.run?.report?.run_id===action.dataset.run?state.run.report:state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report)download(report);break}case'export-report-markdown':{const report=state.run?.report?.run_id===action.dataset.run?state.run.report:state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report)downloadMarkdown(report);break}case'export-case':{const incident=byId(state.incidents,id);if(incident){const alerts=incident.alert_ids.map((alertId)=>byId(state.alerts,alertId)).filter(Boolean);const events=alerts.flatMap((alert)=>alert.event_ids.map((eventId)=>state.events.find((item)=>item.id===eventId)).filter(Boolean));download({exported_at:new Date().toISOString(),incident,alerts,events})}break}}});
+function bind(){document.addEventListener('click',(event)=>{const action=event.target.closest('[data-action="view-run-report"]');if(action&&state.run&&!state.run.report){event.preventDefault();event.stopImmediatePropagation();notify('Finish or reset the active replay before opening a saved report. Its events are preserved.')}},true);document.addEventListener('click',async(event)=>{const nav=event.target.closest('[data-view],[data-nav]');if(nav){navigate(nav.dataset.view||nav.dataset.nav);return}const scenario=event.target.closest('[data-scenario],[data-launch]');if(scenario){const nextScenario=scenario.dataset.scenario||scenario.dataset.launch;if(state.run&&state.run.scenario.id!==nextScenario){if(state.run.index<state.run.scenario.events.length){notify('Finish or reset the active replay before switching scenarios. Its events are preserved.');return}if(state.run.report&&!state.runHistory.some((item)=>item.run_id===state.run.id))state.runHistory.push(state.run.report);state.run=null}state.selectedScenario=nextScenario;state.selectedReportRunId=null;persistDemo();navigate('range');return}const alert=event.target.closest('[data-alert]');if(alert){state.selectedAlert=alert.dataset.alert;render();return}const incident=event.target.closest('[data-incident]');if(incident){state.selectedIncident=incident.dataset.incident;render();return}const process=event.target.closest('[data-process-pid]');if(process){state.selectedProcessPID=Number(process.dataset.processPid);render();return}const host=event.target.closest('[data-host]');if(host){state.filters.processHost=host.dataset.host;state.selectedProcessPID=null;navigate('processes');return}const test=event.target.closest('[data-test-rule]');if(test){const rule=byId(state.rules,test.dataset.testRule);const findings=evaluateLoadedRule(rule,state.events);notify(`${rule.id}: ${findings.length} finding(s) if evaluated against the loaded records. No records were changed.`);return}const action=event.target.closest('[data-action]');if(!action)return;const id=action.dataset.id;switch(action.dataset.action){case'export-simulation-archive':try{download(await buildSimulationArchive());notify('Simulation archive exported.')}catch(error){notify(`Could not export simulation data: ${error.message}`)}break;case'import-simulation-archive':$('#simulation-archive-file')?.click();break;case'load-older-events':await loadOlderEvents();break;case'clear-filters':state.filters={severity:'all',status:'all',query:''};render();break;case'ack-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'acknowledged'});break;case'close-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{status:'closed'});break;case'save-alert':await mutate(`api/alerts/${encodeURIComponent(id)}`,{analyst_notes:$('#alert-note').value,assignee:$('#alert-assignee').value});break;case'save-case':await mutate(`api/incidents/${encodeURIComponent(id)}`,{status:$('#case-status').value,analyst_notes:$('#case-note').value});break;case'start-run':await startRun();break;case'pause-run':if(state.timer)clearTimeout(state.timer);if(state.run){state.run.playing=false;persistDemo();render()}break;case'reset-run':await resetRun();break;case'view-run-report':{const report=state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report){if(state.run?.playing){notify('Pause the active replay before opening a saved report.');break}if(state.run?.report&&!state.runHistory.some((item)=>item.run_id===state.run.id))state.runHistory.push(state.run.report);state.run=null;state.selectedScenario=report.scenario_id;state.selectedReportRunId=report.run_id;persistDemo();navigate('range')}break}case'export-run':if(state.run)download({exported_at:new Date().toISOString(),namespace:'simulation',simulation_only:true,run:state.run,events:state.events.filter((item)=>item.simulation_run_id===state.run.id),alerts:state.alerts.filter((item)=>item.simulation_run_id===state.run.id),incidents:state.incidents.filter((item)=>item.simulation_run_id===state.run.id)});break;case'export-report':{const report=state.run?.report?.run_id===action.dataset.run?state.run.report:state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report)download(report);break}case'export-report-markdown':{const report=state.run?.report?.run_id===action.dataset.run?state.run.report:state.runHistory.find((item)=>item.run_id===action.dataset.run);if(report)downloadMarkdown(report);break}case'export-case':{const incident=byId(state.incidents,id);if(incident){const alerts=incident.alert_ids.map((alertId)=>byId(state.alerts,alertId)).filter(Boolean);const events=alerts.flatMap((alert)=>alert.event_ids.map((eventId)=>state.events.find((item)=>item.id===eventId)).filter(Boolean));download({exported_at:new Date().toISOString(),incident,alerts,events})}break}}});
   document.addEventListener('input',(event)=>{
     if(event.target.id==='timeline-scrub'&&state.run){
       const run=state.run;run.cursor=Number(event.target.value);persistDemo();
@@ -362,7 +407,7 @@ function bind(){document.addEventListener('click',(event)=>{const action=event.t
     }
     if(event.target.id==='alert-search'){state.filters.query=event.target.value;const position=event.target.selectionStart;render();const input=$('#alert-search');input.focus();input.setSelectionRange(position,position)}
   });
-  document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;state.selectedProcessPID=null;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
+  document.addEventListener('change',async(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;state.selectedProcessPID=null;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value);if(event.target.id==='simulation-archive-file'){const file=event.target.files?.[0];event.target.value='';if(!file)return;if(file.size>20*1024*1024){notify('Archive is larger than the 20 MB import limit.');return}try{const result=importSimulationArchive(JSON.parse(await file.text()));render();notify(`Imported ${result.events} events, ${result.alerts} alerts, ${result.incidents} cases, and ${result.reports} reports.`)}catch(error){notify(`Could not import simulation archive: ${error.message}`)}}});
 }
 function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id||report.run?.id||report.incident?.id||'export'}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(anchor.href),1000)}
 function formatReportMarkdown(report){
