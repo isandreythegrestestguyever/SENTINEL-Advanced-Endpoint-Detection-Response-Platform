@@ -104,6 +104,29 @@ test('process graph connects only observed parent IDs and exposes missing ancest
   assert.doesNotMatch(html, /HOST host-1 <span>└─ PARENT PID 20/);
 });
 
+test('simulation archive preserves saved runs and excludes live records', async () => {
+  const context = startApp(new Map());
+  vm.runInContext(`Object.assign(state,{
+    staticDemo:true,
+    scenarios:[{id:'S01'}],
+    events:[{id:'SIM-E1',simulation_run_id:'SIM-1'},{id:'LIVE-E1'}],
+    alerts:[{id:'SIM-A1',simulation_run_id:'SIM-1'},{id:'LIVE-A1'}],
+    incidents:[{id:'SIM-I1',simulation_run_id:'SIM-1'},{id:'LIVE-I1'}],
+    audit:[{action:'event.ingested',event_id:'SIM-E1'},{action:'event.ingested',event_id:'LIVE-E1'},{action:'simulation.reset',run_id:'SIM-1'}],
+    runHistory:[{run_id:'SIM-OLD',scenario_id:'S01',success:true}],
+    run:{id:'SIM-1',scenario:{id:'S01'},index:1,cursor:1,playing:false}
+  })`, context);
+  const archive = await vm.runInContext('buildSimulationArchive()', context);
+  assert.equal(archive.format, 'sentinel-simulation-archive');
+  assert.equal(archive.simulation_only, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(archive.events.map((event) => event.id))), ['SIM-E1']);
+  assert.deepEqual(JSON.parse(JSON.stringify(archive.alerts.map((alert) => alert.id))), ['SIM-A1']);
+  assert.deepEqual(JSON.parse(JSON.stringify(archive.incidents.map((incident) => incident.id))), ['SIM-I1']);
+  assert.deepEqual(JSON.parse(JSON.stringify(archive.audit.map((entry) => entry.action))), ['event.ingested','simulation.reset']);
+  assert.equal(archive.completed_runs[0].run_id, 'SIM-OLD');
+  assert.equal(archive.active_run.run_id, 'SIM-1');
+});
+
 test('browser replay evaluator meets every Go-exported scenario assertion', () => {
   const exported = execFileSync('go', ['run', './cmd/export-demo'], {
     cwd: repositoryRoot,

@@ -14,6 +14,7 @@
 - Authenticated `/api/events` uses stable keyset pagination, defaults to 100 records, caps requests at 500, and reports a continuation cursor. The PostgreSQL path uses an ingestion-time index; JSON mode sorts a snapshot. The dashboard exposes older records in process and network investigations and labels overview counts as the loaded page.
 - The process investigator now groups the loaded records by host and process ID, makes observed parent links selectable, and labels parent IDs absent from the loaded evidence as unresolved. PID reuse remains ambiguous without a process GUID.
 - Reproducible Go detection microbenchmarks cover single-event and threshold-correlation evaluation. A five-run local baseline is recorded in `benchmarks/README.md`; it is not an end-to-end ingestion or capacity benchmark.
+- Sentinel Range exports a simulation-only JSON archive of replay records, linked audit entries, scenarios, and saved reports; the local service export follows all event pages before assembling it.
 
 ## Requires Windows validation
 
