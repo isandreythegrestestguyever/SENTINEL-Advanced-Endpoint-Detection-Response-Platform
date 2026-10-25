@@ -46,11 +46,12 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
-- Endpoint inventory derived from received events, process ancestry assembled only from available process IDs, network metadata view, detection catalog, and audit history.
+- Endpoint inventory derived from received events, a selectable process tree that links only observed parent IDs, process event details, network metadata view, detection catalog, and audit history.
 - Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export.
 - A fictional topology view labeled as synthetic metadata, event-level ATT&CK ground truth versus detector mappings, and visible evidence links in the replay stream.
 - Browser-only Pages replay state is saved per browser profile; local API mode persists through PostgreSQL or the local JSON development store.
 - Read-only Windows Event Log service source with bounded SQLite outbox, persistent channel bookmarks, stable event IDs, HTTPS client identity support, and structured rotating JSONL logs.
+- Reproducible detection-package microbenchmarks with environment and observed baseline recorded separately from end-to-end capacity claims.
 - Responsive dashboard with explicit live-submission versus simulated-data labeling.
 
 ## Event-to-alert path

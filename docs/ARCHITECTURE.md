@@ -25,6 +25,7 @@ flowchart LR
 - `internal/simulator`: six fictional fixtures with declared expected rule IDs. It performs no host activity.
 - `internal/store`: repository interface; mutex-protected JSON development store; PostgreSQL implementation using pgx, embedded versioned SQL migrations, indexes, transactional event/alert/case/audit writes, and normalized evidence links.
 - `GET /api/events`: authenticated, stable keyset pages ordered by ingestion time and event ID; page size defaults to 100 and is capped at 500. PostgreSQL uses a matching index; JSON development mode sorts a snapshot.
+- Process investigation groups loaded records by host and process ID, draws an edge only when the referenced parent ID is also present, and exposes an explicit unresolved-parent label otherwise. PID reuse cannot be disambiguated because the current event schema has no process GUID.
 - `cmd/sentinel`: validation, bearer-token checks on writes, API routes, response headers, request limits, local listener, optional HTTPS, and backend selection.
 - `POST /api/heartbeat`: persists authenticated endpoint version, configured channels, declared capabilities, and server receipt time. Fleet freshness expires after 90 seconds; optional mTLS binds heartbeat host identity to the certificate URI SAN.
 - `web`: static responsive dashboard for local API operation and the browser-only Pages preview.

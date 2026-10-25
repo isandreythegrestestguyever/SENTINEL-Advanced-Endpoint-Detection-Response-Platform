@@ -331,7 +331,7 @@ function bind(){document.addEventListener('click',(event)=>{const action=event.t
     }
     if(event.target.id==='alert-search'){state.filters.query=event.target.value;const position=event.target.selectionStart;render();const input=$('#alert-search');input.focus();input.setSelectionRange(position,position)}
   });
-  document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
+  document.addEventListener('change',(event)=>{if(event.target.id==='severity-filter'){state.filters.severity=event.target.value;render()}if(event.target.id==='status-filter'){state.filters.status=event.target.value;render()}if(event.target.id==='process-host'){state.filters.processHost=event.target.value;state.selectedProcessPID=null;render()}if(event.target.id==='run-speed'&&state.run)state.run.speed=Number(event.target.value)});
 }
 function download(report){const anchor=document.createElement('a');anchor.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));anchor.download=`sentinel-${report.run_id||report.run?.id||report.incident?.id||'export'}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(anchor.href),1000)}
 function formatReportMarkdown(report){
