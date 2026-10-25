@@ -39,6 +39,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
 - Bounded count correlations for repeated authentication failures, file modifications, and same-destination network activity; correlated alerts include every supporting event ID.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
+- Bounded per-IP rate limits on telemetry and write routes, with `Retry-After` responses and a capped in-process bucket map.
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.

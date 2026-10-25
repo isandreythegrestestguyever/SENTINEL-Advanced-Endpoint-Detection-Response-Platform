@@ -479,7 +479,7 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		jsonOut(w, report)
 	})
 	mux.Handle("/", http.FileServer(http.Dir("web")))
-	return mux
+	return newRateLimiter().wrap(mux)
 }
 
 func process(w http.ResponseWriter, db store.Repository, e model.Event) {

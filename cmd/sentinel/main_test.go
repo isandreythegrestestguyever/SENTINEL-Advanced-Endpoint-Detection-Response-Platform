@@ -117,6 +117,47 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestRateLimiterBoundsWritesByClientAndRefills(t *testing.T) {
+	now := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+	limiter := newRateLimiter()
+	limiter.now = func() time.Time { return now }
+	limiter.policies["ingest"] = ratePolicy{rate: 1, burst: 2}
+	called := 0
+	handler := limiter.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := func(remote string, path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, nil)
+		r.RemoteAddr = remote
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, r)
+		return response
+	}
+	for i := 0; i < 2; i++ {
+		if response := request("192.0.2.10:4000", "/api/ingest"); response.Code != http.StatusNoContent {
+			t.Fatalf("request %d unexpectedly limited: %d", i+1, response.Code)
+		}
+	}
+	limited := request("192.0.2.10:4000", "/api/ingest")
+	if limited.Code != http.StatusTooManyRequests || limited.Header().Get("Retry-After") == "" {
+		t.Fatalf("excess ingest request was not bounded with Retry-After: status=%d headers=%v", limited.Code, limited.Header())
+	}
+	if response := request("192.0.2.11:4000", "/api/ingest"); response.Code != http.StatusNoContent {
+		t.Fatalf("one client exhausted another client's budget: %d", response.Code)
+	}
+	now = now.Add(time.Second)
+	if response := request("192.0.2.10:4000", "/api/ingest"); response.Code != http.StatusNoContent {
+		t.Fatalf("token bucket did not refill: %d", response.Code)
+	}
+	if response := request("192.0.2.10:4000", "/api/health"); response.Code != http.StatusNoContent {
+		t.Fatalf("read-only route was rate limited: %d", response.Code)
+	}
+	if called != 5 {
+		t.Fatalf("downstream handler called %d times, want 5", called)
+	}
+}
+
 func TestEventValidationBoundsHostIdentity(t *testing.T) {
 	event := model.Event{ID: "bounded", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "host-1", Hostname: "HOST-1", Source: "test", Type: "process_start"}
 	if message := valid(event); message != "" {
