@@ -1,4 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
+const pageViews = new Set(['overview','fleet','detections','processes','network','incidents','rules','audit','range']);
 const state = {
   view: 'overview', staticDemo: false, demo: null, endpoints: [], events: [], eventCursor: '', eventHasMore: false, eventLoading: false,
   alerts: [], incidents: [], rules: [], audit: [], scenarios: [], selectedAlert: null, selectedProcessPID: null,
@@ -231,6 +232,7 @@ function importSimulationArchive(archive){
   const activeScenario=active?state.scenarios.find((item)=>item.id===active.scenario_id):null;
   if(active&&(!active.run_id||!activeScenario||!Number.isInteger(active.index)||active.index<0||active.index>activeScenario.events.length||!Number.isInteger(active.cursor)||active.cursor<0||active.cursor>active.index))throw new Error('The archive contains an invalid or unavailable active replay.');
   if(active&&state.run?.id!==active.run_id&&state.run&&!state.run.report&&state.run.index<state.run.scenario.events.length)throw new Error('Finish or reset the current replay before importing a different active replay. Its events are preserved.');
+  const imported={events:countNewIDs(state.events,events,'id'),alerts:countNewIDs(state.alerts,alerts,'id'),incidents:countNewIDs(state.incidents,incidents,'id'),reports:countNewIDs(state.runHistory,[...reports,...(activeReport?[activeReport]:[])],'run_id')};
   const next={
     events:mergeByID(state.events,events,'id'),
     alerts:mergeByID(state.alerts,alerts,'id'),
@@ -245,7 +247,14 @@ function importSimulationArchive(archive){
     Object.assign(state,previous);
     throw new Error('Browser storage could not save this archive. Your prior records remain in place.');
   }
-  return {events:events.length,alerts:alerts.length,incidents:incidents.length,reports:reports.length+(activeReport?1:0)};
+  return imported;
+}
+
+function countNewIDs(current,incoming,key){
+  const existing=new Set(current.map((item)=>item[key]));
+  const seen=new Set();
+  for(const item of incoming)if(!existing.has(item[key]))seen.add(item[key]);
+  return seen.size;
 }
 
 function mergeByID(current,incoming,key){
@@ -449,5 +458,7 @@ function downloadMarkdown(report){
 }
 $('#tokenBtn').onclick=()=>{const value=prompt('Paste the analyst or administrator bearer token for this local service. It stays in this browser.');if(value){localStorage.setItem('sentinel-token',value.trim());$('#operator-mode').textContent='TOKEN SAVED';refreshData().catch((error)=>notify(error.message));notify('Local access token saved in this browser.')}};
 $('#refresh').onclick=()=>refreshData().catch((error)=>notify(error.message));
+const initialView=window.location.hash.slice(1);
+if(pageViews.has(initialView))state.view=initialView;
 $('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`;setInterval(()=>$('#clock').textContent=`UTC ${new Date().toISOString().slice(11,19)}`,1000);
 bind();refreshData().catch((error)=>{$('#view-root').innerHTML=empty('SERVICE UNAVAILABLE',error.message)});

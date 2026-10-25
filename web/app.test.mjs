@@ -10,7 +10,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('./app.js', import.meta.url), 'utf8');
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
-function startApp(storage) {
+function startApp(storage, hash = '') {
   const elements = new Map();
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
@@ -31,7 +31,7 @@ function startApp(storage) {
       querySelectorAll: () => [],
       addEventListener() {}
     },
-    window: { location: { hash: '' } },
+    window: { location: { hash } },
     setInterval() { return 1; },
     setTimeout() { return 1; },
     clearTimeout() {},
@@ -40,6 +40,13 @@ function startApp(storage) {
   vm.runInContext(source, context);
   return context;
 }
+
+test('shared page links open the requested dashboard view', () => {
+  const context = startApp(new Map(), '#range');
+  assert.equal(vm.runInContext('state.view', context), 'range');
+  const unknown = startApp(new Map(), '#not-a-view');
+  assert.equal(vm.runInContext('state.view', unknown), 'overview');
+});
 
 test('static replay records and report survive reload in the same browser store', () => {
   const storage = new Map();
@@ -154,6 +161,15 @@ test('simulation archive import adds records and reports without replacing exist
   assert.equal(state.audit.some((entry) => entry.event_id === 'UNRELATED-LIVE'), false);
   assert.equal(state.runHistory.length, 2);
   assert.ok(storage.has('sentinel-static-demo-v1'));
+  const duplicate = vm.runInContext(`importSimulationArchive({
+    format:'sentinel-simulation-archive',schema_version:'1.0',simulation_only:true,
+    events:[{id:'NEW-E1',simulation_run_id:'SIM-NEW'}],
+    alerts:[{id:'NEW-A1',simulation_run_id:'SIM-NEW'}],
+    incidents:[{id:'NEW-I1',simulation_run_id:'SIM-NEW'}],
+    audit:[{action:'event.ingested',event_id:'NEW-E1'}],
+    completed_runs:[{run_id:'SIM-NEW',scenario_id:'S02',success:true}]
+  })`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(duplicate)), {events:0,alerts:0,incidents:0,reports:0});
 });
 
 test('simulation archive restores a paused replay without starting it', () => {
