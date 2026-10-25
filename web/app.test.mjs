@@ -241,9 +241,9 @@ test('browser replay evaluator meets every Go-exported scenario assertion', () =
     return {id: scenario.id, expected: scenario.expected_rule_ids, actual: [...new Set(alerts)]};
   }))`, context);
   const scenarios = JSON.parse(result);
-  assert.equal(scenarios.length, 6);
+  assert.equal(scenarios.length, 7);
   for (const scenario of scenarios) {
-    assert.deepEqual(scenario.actual.sort(), [...scenario.expected].sort(), `${scenario.id} browser detection assertions`);
+    assert.deepEqual(scenario.actual.sort(), [...(scenario.expected||[])].sort(), `${scenario.id} browser detection assertions`);
   }
 });
 
@@ -265,4 +265,10 @@ test('simulation report Markdown keeps evidence and undefined denominators expli
   assert.match(markdown, /Scenario ground truth: T1059/);
   assert.match(markdown, /Event IDs: E1/);
   assert.match(markdown, /do not estimate real-world detection quality/);
+});
+
+test('a replay fails when it produces an unexpected alert', () => {
+  assert.equal(vm.runInContext(`isRunSuccessful([],[])`, startApp(new Map())), true);
+  assert.equal(vm.runInContext(`isRunSuccessful([],['SEN-EXEC-001'])`, startApp(new Map())), false);
+  assert.equal(vm.runInContext(`isRunSuccessful(['SEN-EXEC-001'],[])`, startApp(new Map())), false);
 });

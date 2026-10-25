@@ -22,7 +22,7 @@ flowchart LR
 
 - `internal/model`: Sentinel schema `1.0` events, alerts, incidents, and derived endpoint records. The schema borrows concepts from OCSF but is not conformant.
 - `internal/detection`: six enabled, revisioned rules using case-insensitive field conditions; three also correlate bounded event counts by host/run and, for network activity, destination.
-- `internal/simulator`: six fictional fixtures with declared expected rule IDs. It performs no host activity.
+- `internal/simulator`: seven fictional fixtures with declared expected rule IDs, including a benign no-alert baseline. It performs no host activity.
 - `internal/store`: repository interface; mutex-protected JSON development store; PostgreSQL implementation using pgx, embedded versioned SQL migrations, indexes, transactional event/alert/case/audit writes, and normalized evidence links.
 - `GET /api/events`: authenticated, stable keyset pages ordered by ingestion time and event ID; page size defaults to 100 and is capped at 500. PostgreSQL uses a matching index; JSON development mode sorts a snapshot.
 - Process investigation groups loaded records by host and process ID, draws an edge only when the referenced parent ID is also present, and exposes an explicit unresolved-parent label otherwise. PID reuse cannot be disambiguated because the current event schema has no process GUID.

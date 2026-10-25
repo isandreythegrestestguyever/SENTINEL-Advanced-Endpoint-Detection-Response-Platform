@@ -2,6 +2,7 @@ package detection
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -23,6 +24,11 @@ func TestEveryScenarioExpectedRulesMatch(t *testing.T) {
 			for _, want := range scenario.ExpectedRuleIDs {
 				if !got[want] {
 					t.Errorf("%s did not match expected %s", scenario.ID, want)
+				}
+			}
+			for actual := range got {
+				if !slices.Contains(scenario.ExpectedRuleIDs, actual) {
+					t.Errorf("%s produced unexpected rule %s", scenario.ID, actual)
 				}
 			}
 		})

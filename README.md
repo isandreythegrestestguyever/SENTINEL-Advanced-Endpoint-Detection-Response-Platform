@@ -4,7 +4,7 @@
 
 [Open the GitHub Pages demo](https://isandreythegrestestguyever.github.io/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/)
 
-SENTINEL is a local-first security engineering workbench. The Go service accepts normalized event records, evaluates explainable rules, persists evidence, groups alerts into incidents, and serves an analyst dashboard. The Rust Windows service collects selected Security and Sysmon Event Log records, normalizes them, durably buffers them in SQLite, and delivers them to the authenticated ingest endpoint. Six deterministic fictional exercises send events through the Go ingest and detection path in local mode.
+SENTINEL is a local-first security engineering workbench. The Go service accepts normalized event records, evaluates explainable rules, persists evidence, groups alerts into incidents, and serves an analyst dashboard. The Rust Windows service collects selected Security and Sysmon Event Log records, normalizes them, durably buffers them in SQLite, and delivers them to the authenticated ingest endpoint. Seven deterministic fictional exercises send events through the Go ingest and detection path in local mode, including a benign baseline that expects no alerts.
 
 The hosted Pages build is a **browser-only simulation**: fixtures and rule definitions are exported from the Go packages, then JavaScript applies those exported definitions to events in the browser. This is a browser implementation of the same documented rule conditions; it does not call the Go detector. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Sentinel Range includes **Export All Sim Data** and **Import Sim Data** for portable simulation archives. Import adds records to the current browser store, keeps existing records, and can restore a paused replay without starting it. The archive contains simulated events, alerts, cases, audit entries, scenarios, and saved run reports; live records are excluded. Run the local Go service to send each replay event through the actual Go backend and server-side persistence.
 
@@ -47,7 +47,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, a selectable process tree that links only observed parent IDs, process event details, network metadata view, detection catalog, and audit history.
-- Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export.
+- Seven deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export. Runs fail on either missed expected rules or unexpected alert rules; the benign baseline checks that ordinary activity stays clear.
 - Simulation-only JSON archive export that keeps browser and service replay evidence portable without mixing live event records into the archive.
 - A fictional topology view labeled as synthetic metadata, event-level ATT&CK ground truth versus detector mappings, and visible evidence links in the replay stream.
 - Browser-only Pages replay state is saved per browser profile; local API mode persists through PostgreSQL or the local JSON development store.
@@ -72,7 +72,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - `cmd/export-demo`: exports scenario and rule definitions for Pages.
 - `internal/model`: versioned Sentinel event, alert, incident, and endpoint types.
 - `internal/detection`: native single-field rule matching.
-- `internal/simulator`: six deterministic synthetic scenario fixtures.
+- `internal/simulator`: seven deterministic synthetic scenario fixtures.
 - `internal/store`: PostgreSQL persistence and migrations, plus a mutex-protected JSON development store.
 - `web`: static dashboard and browser-only Pages preview.
 - `docs`: architecture, detection, simulator, testing, and threat-model notes.
