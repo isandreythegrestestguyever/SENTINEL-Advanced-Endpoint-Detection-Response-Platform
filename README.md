@@ -84,7 +84,7 @@ See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGI
 
 ## Verification
 
-Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, and Rust format/tests. Real browser flows use `npm ci`, `npx playwright install chromium`, and `npm run test:e2e`; Playwright starts an isolated Go service and exercises analyst-token validation, S01 ingestion, Sigma evidence, incident display, and report export. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
+Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, and Rust format/tests. Real browser flows use `npm ci`, `npx playwright install chromium`, and `npm run test:e2e`; Playwright starts an isolated Go service, verifies analyst-token validation, replays all seven scenarios through authenticated ingestion, checks S01 Sigma evidence and incident display, and validates every downloaded report against ground truth. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
 
 The screenshot below is captured by the passing Playwright run. Every event shown is a deterministic synthetic fixture; the screenshot does not show a live endpoint.
 

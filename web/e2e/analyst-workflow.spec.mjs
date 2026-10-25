@@ -54,3 +54,44 @@ test('analyst runs S01, inspects Sigma evidence, and exports the fixture report'
   await expect(simulatedCase).toBeVisible();
   await expect(simulatedCase).toContainText('3 alert(s)');
 });
+
+test('all seven scenarios pass through backend ingestion with their ground truth', async ({ page }) => {
+  await page.goto('/#range');
+  await page.getByRole('button', { name: 'Set analyst token' }).click();
+  await page.locator('#analyst-token').fill('sentinel-e2e-analyst-token');
+  await page.getByRole('button', { name: 'VERIFY & SAVE' }).click();
+  await expect(page.locator('#operator-mode')).toHaveText('TOKEN SAVED');
+
+  const scenarios = await page.locator('[data-scenario]').evaluateAll((buttons) =>
+    buttons.map((button) => ({
+      id: button.dataset.scenario,
+      name: button.querySelector('strong')?.textContent?.trim(),
+    })),
+  );
+  expect(scenarios).toHaveLength(7);
+
+  for (const scenario of scenarios) {
+    await page.locator(`[data-scenario="${scenario.id}"]`).click();
+    await expect(page.getByRole('heading', { name: scenario.name })).toBeVisible();
+    const requirements = await page.locator('.empty-inline').filter({ hasText: 'Results appear after the final event' }).innerText();
+    const expected = [...requirements.matchAll(/SEN-[A-Z0-9-]+/g)].map(([ruleId]) => ruleId);
+
+    await page.getByRole('button', { name: 'START REPLAY' }).click();
+    await expect(page.getByText('SCENARIO PASSED')).toBeVisible({ timeout: 20_000 });
+    for (const ruleId of expected) {
+      await expect(page.getByText(`DETECTED ${ruleId}`, { exact: true })).toBeVisible();
+    }
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: 'EXPORT JSON', exact: true }).click(),
+    ]);
+    const report = await downloadedJSON(download);
+    expect(report.success, `${scenario.id} should satisfy its ground truth`).toBe(true);
+    expect(report.scenario_id).toBe(scenario.id);
+    expect(report.expected_alerts).toEqual(expected);
+    expect(report.detected).toEqual(expected);
+    expect(report.missed).toEqual([]);
+    expect(report.unexpected).toEqual([]);
+  }
+});
