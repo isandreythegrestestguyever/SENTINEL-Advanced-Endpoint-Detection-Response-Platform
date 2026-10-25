@@ -507,38 +507,58 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 				actual[a.RuleID] = true
 			}
 		}
-		detected := []string{}
-		missed := []string{}
-		for _, id := range selected.ExpectedRuleIDs {
-			if actual[id] {
-				detected = append(detected, id)
-			} else {
-				missed = append(missed, id)
-			}
-		}
-		unexpected := []string{}
+		actualIDs := make([]string, 0, len(actual))
 		for id := range actual {
-			expect := false
-			for _, x := range selected.ExpectedRuleIDs {
-				if x == id {
-					expect = true
-				}
-			}
-			if !expect {
-				unexpected = append(unexpected, id)
-			}
+			actualIDs = append(actualIDs, id)
 		}
+		evaluation := evaluateScenario(selected.ExpectedRuleIDs, actualIDs)
 		runAlertCount := 0
 		for _, alert := range d.Alerts {
 			if alert.SimulationRunID == req.RunID {
 				runAlertCount++
 			}
 		}
-		report := map[string]any{"scenario": selected.Name, "scenario_id": selected.ID, "scenario_version": "1.0", "dataset_version": "1.0", "rule_set_version": "1", "simulation_seed": "deterministic-fixture-v1", "run_id": req.RunID, "event_count": len(selected.Events), "expected_alerts": selected.ExpectedRuleIDs, "detected": detected, "missed": missed, "unexpected": unexpected, "success": len(missed) == 0, "precision": ratio(len(detected), len(detected)+len(unexpected)), "recall": ratio(len(detected), len(selected.ExpectedRuleIDs)), "errors": []string{}, "alert_count": runAlertCount}
+		report := map[string]any{"scenario": selected.Name, "scenario_id": selected.ID, "scenario_version": "1.0", "dataset_version": "1.0", "rule_set_version": "1", "simulation_seed": "deterministic-fixture-v1", "run_id": req.RunID, "event_count": len(selected.Events), "expected_alerts": selected.ExpectedRuleIDs, "detected": evaluation.Detected, "missed": evaluation.Missed, "unexpected": evaluation.Unexpected, "success": evaluation.Success, "precision": ratio(len(evaluation.Detected), len(evaluation.Detected)+len(evaluation.Unexpected)), "recall": ratio(len(evaluation.Detected), len(selected.ExpectedRuleIDs)), "errors": []string{}, "alert_count": runAlertCount}
 		jsonOut(w, report)
 	})
 	mux.Handle("/", http.FileServer(http.Dir("web")))
 	return newRateLimiter().wrap(mux)
+}
+
+type scenarioEvaluation struct {
+	Detected   []string
+	Missed     []string
+	Unexpected []string
+	Success    bool
+}
+
+func evaluateScenario(expectedIDs, actualIDs []string) scenarioEvaluation {
+	expected := make(map[string]struct{}, len(expectedIDs))
+	actual := make(map[string]struct{}, len(actualIDs))
+	for _, id := range expectedIDs {
+		expected[id] = struct{}{}
+	}
+	for _, id := range actualIDs {
+		actual[id] = struct{}{}
+	}
+	out := scenarioEvaluation{Detected: []string{}, Missed: []string{}, Unexpected: []string{}}
+	for id := range expected {
+		if _, ok := actual[id]; ok {
+			out.Detected = append(out.Detected, id)
+		} else {
+			out.Missed = append(out.Missed, id)
+		}
+	}
+	for id := range actual {
+		if _, ok := expected[id]; !ok {
+			out.Unexpected = append(out.Unexpected, id)
+		}
+	}
+	sort.Strings(out.Detected)
+	sort.Strings(out.Missed)
+	sort.Strings(out.Unexpected)
+	out.Success = len(out.Missed) == 0 && len(out.Unexpected) == 0
+	return out
 }
 
 func process(w http.ResponseWriter, db store.Repository, e model.Event) {

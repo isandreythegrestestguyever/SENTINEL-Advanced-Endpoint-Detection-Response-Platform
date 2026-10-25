@@ -117,6 +117,23 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestScenarioEvaluationFailsMissedAndUnexpectedRules(t *testing.T) {
+	passed := evaluateScenario([]string{"SEN-A", "SEN-B"}, []string{"SEN-A", "SEN-B", "SEN-B"})
+	if !passed.Success || len(passed.Detected) != 2 || len(passed.Missed) != 0 || len(passed.Unexpected) != 0 {
+		t.Fatalf("matching rules should pass with duplicate IDs deduplicated: %#v", passed)
+	}
+
+	unexpected := evaluateScenario([]string{"SEN-A"}, []string{"SEN-A", "SEN-X"})
+	if unexpected.Success || len(unexpected.Missed) != 0 || len(unexpected.Unexpected) != 1 || unexpected.Unexpected[0] != "SEN-X" {
+		t.Fatalf("unexpected rule should fail the scenario: %#v", unexpected)
+	}
+
+	missed := evaluateScenario([]string{"SEN-A"}, nil)
+	if missed.Success || len(missed.Missed) != 1 || missed.Missed[0] != "SEN-A" {
+		t.Fatalf("missed expected rule should fail the scenario: %#v", missed)
+	}
+}
+
 func TestRetentionWindowConfiguration(t *testing.T) {
 	for _, test := range []struct {
 		input string
