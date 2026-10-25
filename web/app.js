@@ -64,7 +64,7 @@ async function api(path, options = {}) {
     const pagesFallback = error.status === 404 && window.location.hostname.endsWith('github.io');
     if ((error.status && !pagesFallback) || error.status === 401 || error.status === 403) throw error;
     state.staticDemo = true;
-    state.demo = await fetch('demo-data.json').then((response) => {
+    state.demo = await fetch('demo-data.json?v=1.1').then((response) => {
       if (!response.ok) throw new Error('Static replay data is unavailable.');
       return response.json();
     });
@@ -167,6 +167,7 @@ async function refreshData() {
   $('#boundary-title').textContent=connected?'AGENT HEARTBEAT RECEIVED':observed?'OBSERVED EVENTS · NO HEARTBEAT':'NO LIVE SENSORS CONNECTED';
   $('#boundary-copy').textContent=connected?`${connected} agent(s) reported within 90 seconds. Reported capabilities are agent-provided; this build has no response actions.`:observed?'Events were submitted for hosts without a recent agent heartbeat. They do not establish an enrolled or connected sensor.':'This instance contains no Windows sensor. Replay telemetry is synthetic, labeled, and isolated by run ID.';
   const sideStatus=$('.side-status span');if(sideStatus)sideStatus.textContent=state.staticDemo?'STATIC DEMO':'LOCAL CONTROL PLANE';
+  const requestedView=window.location.hash.slice(1);if(pageViews.has(requestedView))state.view=requestedView;
   render();
 }
 
