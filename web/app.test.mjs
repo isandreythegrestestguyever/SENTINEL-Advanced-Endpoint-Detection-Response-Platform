@@ -85,6 +85,25 @@ test('static event history keeps every browser replay record when paged API is r
   assert.equal(page.next_cursor, '');
 });
 
+test('process graph connects only observed parent IDs and exposes missing ancestry', () => {
+  const context = startApp(new Map());
+  const events = [
+    {id:'E1',host_id:'host-1',process_id:100,parent_process_id:20,time:'2026-01-01T00:00:00Z',image:'powershell.exe'},
+    {id:'E2',host_id:'host-1',process_id:200,parent_process_id:100,time:'2026-01-01T00:00:01Z',image:'child.exe'},
+    {id:'E3',host_id:'host-1',process_id:300,parent_process_id:900,time:'2026-01-01T00:00:02Z',image:'orphan.exe'}
+  ];
+  const summary = vm.runInContext(`(() => {
+    const tree = buildProcessTree(${JSON.stringify(events)});
+    return {roots:tree.roots.map(node => node.pid),children:tree.nodes.find(node => node.pid === 100).children.map(node => node.pid),unobserved:tree.nodes.filter(node => node.unobservedParent).map(node => [node.pid,node.unobservedParent])};
+  })()`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(summary)), {roots:[100,300],children:[200],unobserved:[[100,20],[300,900]]});
+  vm.runInContext(`state.events = ${JSON.stringify(events)}; state.alerts = [];`, context);
+  const html = vm.runInContext('renderProcesses()', context);
+  assert.match(html, /PARENT PID 20 · NOT IN LOADED EVENTS/);
+  assert.match(html, /data-process-pid="200"/);
+  assert.doesNotMatch(html, /HOST host-1 <span>└─ PARENT PID 20/);
+});
+
 test('browser replay evaluator meets every Go-exported scenario assertion', () => {
   const exported = execFileSync('go', ['run', './cmd/export-demo'], {
     cwd: repositoryRoot,

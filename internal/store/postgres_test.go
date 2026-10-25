@@ -93,7 +93,7 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 		}
 	}
 	for index := 0; index < 3; index++ {
-		pageEvent := model.Event{ID: fmt.Sprintf("page-event-%s-%d", suffix, index), SchemaVersion: "1.0", Time: now, IngestedAt: now.Add(time.Duration(index) * time.Second), HostID: "page-host", Hostname: "PAGE-HOST", Source: "integration-test", Type: "page_test", SimulationRunID: pageRun}
+		pageEvent := model.Event{ID: fmt.Sprintf("page-event-%s-%d", suffix, index), SchemaVersion: "1.0", Time: now, IngestedAt: now.Add(time.Hour + time.Duration(index)*time.Second), HostID: "page-host", Hostname: "PAGE-HOST", Source: "integration-test", Type: "page_test", SimulationRunID: pageRun}
 		if err := db.AddEvent(pageEvent, nil); err != nil {
 			t.Fatal(err)
 		}
