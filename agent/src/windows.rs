@@ -9,19 +9,16 @@ use std::{
     time::Duration,
 };
 
-use windows_sys::{
-    Win32::{
-        Foundation::{ERROR_SUCCESS, GetLastError},
-        System::EventLog::{
-            EVT_HANDLE, EvtClose, EvtCreateBookmark, EvtRender, EvtRenderBookmark,
-            EvtRenderEventXml, EvtSubscribe, EvtSubscribeActionDeliver, EvtSubscribeActionError,
-            EvtSubscribeStartAfterBookmark, EvtSubscribeToFutureEvents, EvtUpdateBookmark,
-        },
+use windows_sys::Win32::{
+    Foundation::{ERROR_SUCCESS, GetLastError},
+    System::EventLog::{
+        EVT_HANDLE, EvtClose, EvtCreateBookmark, EvtRender, EvtRenderBookmark, EvtRenderEventXml,
+        EvtSubscribe, EvtSubscribeActionDeliver, EvtSubscribeActionError,
+        EvtSubscribeStartAfterBookmark, EvtSubscribeToFutureEvents, EvtUpdateBookmark,
     },
-    core::PCWSTR,
 };
 
-use crate::{Channel, Config, Event, Spool, normalize_windows_event, parse_windows_event};
+use crate::{Channel, Config, Event, Spool, normalize_windows_event};
 
 struct CallbackContext {
     channel: String,
@@ -178,7 +175,7 @@ fn subscribe(
     let subscription = unsafe {
         EvtSubscribe(
             0,
-            0,
+            ptr::null_mut(),
             channel_wide.as_ptr(),
             query_wide.as_ptr(),
             subscription_bookmark,
