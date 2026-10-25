@@ -289,9 +289,9 @@ func TestSimulationEndpointPreservesFixtureTimeAndScopesReport(t *testing.T) {
 		t.Fatalf("simulation status = %d: %s", response.Code, response.Body.String())
 	}
 	var report struct {
-		Success     bool `json:"success"`
-		AlertCount  int  `json:"alert_count"`
-		EventCount  int  `json:"event_count"`
+		Success    bool `json:"success"`
+		AlertCount int  `json:"alert_count"`
+		EventCount int  `json:"event_count"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&report); err != nil {
 		t.Fatal(err)
