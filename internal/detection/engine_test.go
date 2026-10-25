@@ -78,6 +78,18 @@ func TestNetworkCorrelationSeparatesDestinations(t *testing.T) {
 	}
 }
 
+func TestFileCreationAndModificationShareSafeRateRule(t *testing.T) {
+	base := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
+	previous := []model.Event{
+		{ID: "f1", HostID: "file-host", SimulationRunID: "file-run", Time: base, Type: "file_created"},
+		{ID: "f2", HostID: "file-host", SimulationRunID: "file-run", Time: base.Add(time.Second), Type: "file_modified"},
+	}
+	findings := Evaluate(model.Event{ID: "f3", HostID: "file-host", SimulationRunID: "file-run", Time: base.Add(2 * time.Second), Type: "file_created"}, previous)
+	if len(findings) != 1 || findings[0].Rule.ID != "SEN-FILE-004" || len(findings[0].EventIDs) != 3 {
+		t.Fatalf("mixed file create/modify sequence findings = %#v", findings)
+	}
+}
+
 func authEvent(index int, host, run string, timestamp time.Time) model.Event {
 	return model.Event{ID: fmt.Sprintf("auth-%d", index), HostID: host, SimulationRunID: run, Time: timestamp, Type: "authentication_failure"}
 }

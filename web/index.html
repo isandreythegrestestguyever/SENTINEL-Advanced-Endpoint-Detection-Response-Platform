@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0f10">
   <title>SENTINEL | Endpoint Detection & Response</title>
-  <link rel="stylesheet" href="style.css?v=1.1">
+  <link rel="stylesheet" href="style.css?v=1.2">
 </head>
 <body>
   <aside class="sidebar">
@@ -31,9 +31,9 @@
     <header class="topbar"><div class="breadcrumbs"><span>SECURITY OPERATIONS</span><b>/</b><strong id="crumb">COMMAND OVERVIEW</strong></div><div class="top-actions"><span class="mode-pill" id="mode-pill"><i></i> SIMULATION / LIVE BOUNDARY</span><span class="utc-clock" id="clock">UTC --:--:--</span><button class="icon-button" id="refresh" aria-label="Refresh data" title="Refresh data">↻</button></div></header>
     <section class="boundary-banner"><span class="boundary-icon">!</span><div><strong id="boundary-title">NO LIVE SENSORS CONNECTED</strong><span id="boundary-copy">This instance contains no Windows sensor. Replay telemetry is synthetic, labeled, and isolated by run ID.</span></div><button data-nav="range" class="banner-action">OPEN SENTINEL RANGE <span>→</span></button></section>
     <div id="view-root" aria-live="polite"></div>
-    <footer class="footer"><span>SENTINEL / EVIDENCE OVER APPEARANCE</span><span>LOCAL FILE STORE <b>·</b> SIMULATION LABELING ENFORCED</span></footer>
+    <footer class="footer"><span>SENTINEL / EVIDENCE OVER APPEARANCE</span><span><span id="storage-label">LOCAL SERVICE STORAGE</span> <b>·</b> SIMULATION LABELING ENFORCED</span></footer>
   </main>
   <div class="toast" id="toast" role="status"></div>
-  <script src="app.js?v=1.2"></script>
+  <script src="app.js?v=1.3"></script>
 </body>
 </html>

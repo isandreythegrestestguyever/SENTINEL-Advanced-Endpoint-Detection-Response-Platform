@@ -2,3 +2,4 @@ sentinel-data.json
 sentinel-data.json.tmp
 *.log
 .DS_Store
+/agent/target/

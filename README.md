@@ -4,11 +4,11 @@
 
 [Open the GitHub Pages demo](https://isandreythegrestestguyever.github.io/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/)
 
-SENTINEL is an early, functional security engineering project. The Go service accepts normalized event records, evaluates a small explainable rule set, persists matching evidence, creates host-and-run incident groups, and serves an analyst dashboard. Six deterministic fictional exercises feed events through the same ingest route and detection code used by submitted telemetry.
+SENTINEL is a local-first security engineering workbench. The Go service accepts normalized event records, evaluates explainable rules, persists evidence, groups alerts into incidents, and serves an analyst dashboard. The Rust Windows service collects selected Security and Sysmon Event Log records, normalizes them, durably buffers them in SQLite, and delivers them to the authenticated ingest endpoint. Six deterministic fictional exercises send events through the Go ingest and detection path in local mode.
 
-The hosted Pages build is a **browser-only simulation**: its fixtures and rule definitions are exported from the Go packages, and JavaScript evaluates them in the browser. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to exercise the backend event path and server-side persistence.
+The hosted Pages build is a **browser-only simulation**: fixtures and rule definitions are exported from the Go packages, then JavaScript applies those exported definitions to events in the browser. This is a browser implementation of the same documented rule conditions; it does not call the Go detector. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to send each replay event through the actual Go backend and server-side persistence.
 
-> **Not production EDR:** There is no Windows sensor, endpoint enrollment, response action, user accounts or sessions, mTLS, or production deployment configuration. PostgreSQL support does not make this a production service. Configured analyst and administrator bearer tokens are a minimal single-process access split, not a full identity system. The local JSON store is development-only. Do not expose the service to an untrusted network or submit sensitive telemetry.
+> **Not production EDR:** The Windows sensor has portable normalization/spool tests and a Windows CI cross-target build check, but has not been run on a Windows 11 endpoint here. There is no endpoint enrollment, certificate-to-host binding or revocation, heartbeat, response action, user accounts or sessions, production deployment, retention policy, or external security review. Optional mTLS verifies a client certificate chain but does not enroll or identify a unique endpoint. Configured bearer tokens are a minimal single-process access split, not a full identity system. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
 ## Run locally
 
@@ -31,6 +31,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 | `SENTINEL_ADMIN_TOKEN` | Random per start | Administrator bearer token; required for simulation reset |
 | `SENTINEL_ANALYST_TOKEN` | unset | Optional distinct analyst bearer token; can read data and submit events or analyst updates |
 | `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
+| `SENTINEL_CLIENT_CA` | unset | Require a client certificate from this CA; must be used with HTTPS |
 
 ## What works
 
@@ -42,8 +43,10 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, process ancestry assembled only from available process IDs, network metadata view, detection catalog, and audit history.
-- Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, reset, result evaluation, and JSON report export.
+- Six deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export.
+- A fictional topology view labeled as synthetic metadata, event-level ATT&CK ground truth versus detector mappings, and visible evidence links in the replay stream.
 - Browser-only Pages replay state is saved per browser profile; local API mode persists through PostgreSQL or the local JSON development store.
+- Read-only Windows Event Log service source with bounded SQLite outbox, persistent channel bookmarks, stable event IDs, HTTPS client identity support, and structured rotating JSONL logs.
 - Responsive dashboard with explicit live-submission versus simulated-data labeling.
 
 ## Event-to-alert path
@@ -59,6 +62,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 ## Repository guide
 
 - `cmd/sentinel`: local Go HTTP service.
+- `agent`: Rust Windows Event Log service and portable spool/normalization components.
 - `cmd/export-demo`: exports scenario and rule definitions for Pages.
 - `internal/model`: versioned Sentinel event, alert, incident, and endpoint types.
 - `internal/detection`: native single-field rule matching.
@@ -67,15 +71,15 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - `web`: static dashboard and browser-only Pages preview.
 - `docs`: architecture, detection, simulator, testing, and threat-model notes.
 
-See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGINE.md), [simulator guide](docs/SIMULATOR.md), [testing](docs/TESTING.md), [threat model](docs/THREAT_MODEL.md), and [security policy](SECURITY.md).
+See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGINE.md), [simulator guide](docs/SIMULATOR.md), [agent guide](docs/AGENT.md), [release status](docs/RELEASE_STATUS.md), [testing](docs/TESTING.md), [threat model](docs/THREAT_MODEL.md), and [security policy](SECURITY.md).
 
 ## Verification
 
-The current source has been checked with `go test ./...`, `go vet ./...`, and `node --check web/app.js`. These checks cover Go unit tests and JavaScript syntax; they do not establish Windows sensor support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
+Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, `cargo fmt --manifest-path agent/Cargo.toml -- --check`, and `cargo test --locked --manifest-path agent/Cargo.toml`. CI checks the Windows agent target and PostgreSQL-backed paths after the updated workflow runs. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
 
 ## Roadmap
 
-The next major engineering slices are a Windows Rust service using documented event providers; authenticated endpoint enrollment and mutual TLS; user accounts and session-based analyst access; broader browser end-to-end tests; and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+Next engineering priorities are Windows 11 service integration tests, authenticated endpoint enrollment with certificate-to-host binding and revocation, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

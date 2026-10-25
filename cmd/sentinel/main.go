@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -58,10 +59,15 @@ func main() {
 		log.Printf("SENTINEL_ANALYST_TOKEN is unset; the administrator token can access analyst routes")
 	}
 	mux := routes(db, AccessTokens{Admin: token, Analyst: analystToken})
+	tlsConfig, err := tlsConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 	addr := env("SENTINEL_ADDR", "127.0.0.1:8080")
-	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: tlsConfig}
 	serveErrors := make(chan error, 1)
-	if cert, key := os.Getenv("SENTINEL_TLS_CERT"), os.Getenv("SENTINEL_TLS_KEY"); cert != "" && key != "" {
+	if cert := os.Getenv("SENTINEL_TLS_CERT"); cert != "" {
+		key := os.Getenv("SENTINEL_TLS_KEY")
 		log.Printf("SENTINEL listening on https://%s (minimum TLS 1.3)", addr)
 		go func() { serveErrors <- server.ListenAndServeTLS(cert, key) }()
 	} else {
@@ -88,6 +94,31 @@ func main() {
 			log.Printf("HTTP server stopped: %v", err)
 		}
 	}
+}
+
+func tlsConfigFromEnv() (*tls.Config, error) {
+	certPath, keyPath, caPath := os.Getenv("SENTINEL_TLS_CERT"), os.Getenv("SENTINEL_TLS_KEY"), os.Getenv("SENTINEL_CLIENT_CA")
+	if (certPath == "") != (keyPath == "") {
+		return nil, errors.New("SENTINEL_TLS_CERT and SENTINEL_TLS_KEY must be configured together")
+	}
+	if caPath != "" && certPath == "" {
+		return nil, errors.New("SENTINEL_CLIENT_CA requires HTTPS certificate and key configuration")
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS13}
+	if caPath == "" {
+		return config, nil
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA bundle: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("SENTINEL_CLIENT_CA did not contain a usable PEM certificate")
+	}
+	config.ClientCAs = clientCAs
+	config.ClientAuth = tls.RequireAndVerifyClientCert
+	return config, nil
 }
 
 type AccessTokens struct {
@@ -319,14 +350,15 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		if req.RunID == "" {
 			req.RunID = fmt.Sprintf("SIM-%d", time.Now().UnixNano())
 		}
-		beforeData, ok := readData(w, db)
-		if !ok {
+		if len(req.RunID) > 128 || strings.TrimSpace(req.RunID) != req.RunID {
+			http.Error(w, "invalid run_id", http.StatusBadRequest)
 			return
 		}
-		before := len(beforeData.Alerts)
-		for index, event := range selected.Events {
+		if _, ok := readData(w, db); !ok {
+			return
+		}
+		for _, event := range selected.Events {
 			event.SimulationRunID = req.RunID
-			event.Time = time.Now().UTC().Add(time.Duration(len(beforeData.Events)+index) * time.Millisecond)
 			event.ID = req.RunID + "-" + event.ID
 			if _, err := processEvent(db, event); err != nil {
 				http.Error(w, "could not persist simulation event", http.StatusInternalServerError)
@@ -364,7 +396,13 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 				unexpected = append(unexpected, id)
 			}
 		}
-		report := map[string]any{"scenario": selected.Name, "scenario_id": selected.ID, "scenario_version": "1.0", "dataset_version": "1.0", "rule_set_version": "1", "simulation_seed": "deterministic-fixture-v1", "run_id": req.RunID, "event_count": len(selected.Events), "expected_alerts": selected.ExpectedRuleIDs, "detected": detected, "missed": missed, "unexpected": unexpected, "success": len(missed) == 0, "precision": ratio(len(detected), len(detected)+len(unexpected)), "recall": ratio(len(detected), len(selected.ExpectedRuleIDs)), "errors": []string{}, "alert_count": len(d.Alerts) - before}
+		runAlertCount := 0
+		for _, alert := range d.Alerts {
+			if alert.SimulationRunID == req.RunID {
+				runAlertCount++
+			}
+		}
+		report := map[string]any{"scenario": selected.Name, "scenario_id": selected.ID, "scenario_version": "1.0", "dataset_version": "1.0", "rule_set_version": "1", "simulation_seed": "deterministic-fixture-v1", "run_id": req.RunID, "event_count": len(selected.Events), "expected_alerts": selected.ExpectedRuleIDs, "detected": detected, "missed": missed, "unexpected": unexpected, "success": len(missed) == 0, "precision": ratio(len(detected), len(detected)+len(unexpected)), "recall": ratio(len(detected), len(selected.ExpectedRuleIDs)), "errors": []string{}, "alert_count": runAlertCount}
 		jsonOut(w, report)
 	})
 	mux.Handle("/", http.FileServer(http.Dir("web")))
@@ -414,7 +452,7 @@ func valid(e model.Event) string {
 	if e.ID == "" || e.HostID == "" || e.Hostname == "" || e.Type == "" || e.Source == "" {
 		return "id, host_id, hostname, source and type are required"
 	}
-	if len(e.ID) > 128 || len(e.Hostname) > 255 || len(e.CommandLine) > 4096 {
+	if len(e.ID) > 128 || len(e.HostID) > 128 || len(e.Hostname) > 255 || len(e.CommandLine) > 4096 {
 		return "field length limit exceeded"
 	}
 	if e.SchemaVersion != "1.0" {

@@ -1,12 +1,13 @@
 # Architecture
 
-SENTINEL currently ships as a single Go service with a static browser UI. PostgreSQL is the persistent service path when `SENTINEL_DATABASE_URL` is configured; a local JSON store remains available for dependency-free development. GitHub Pages runs only a browser-side preview.
+SENTINEL currently ships as a Go service, a static browser UI, and a Rust Windows Event Log service. PostgreSQL is the persistent service path when `SENTINEL_DATABASE_URL` is configured; a local JSON store remains available for dependency-free development. GitHub Pages runs only a browser-side preview.
 
 ```mermaid
 flowchart LR
   UI[Browser analyst UI] -->|read and analyst actions| API[Go HTTP service]
   UI -->|one event at a time| API
-  SENSOR[Future Rust Windows sensor] -. planned .->|authenticated telemetry| API
+  SENSOR[Rust Windows Event Log service] -->|HTTPS and bearer token| API
+  SENSOR -->|durable outbox and bookmarks| SPOOL[(SQLite)]
   API --> VALIDATE[Event validation]
   VALIDATE --> ENGINE[Six native rules]
   ENGINE --> STORE[Repository interface]
@@ -28,8 +29,8 @@ flowchart LR
 
 Local `/api/ingest` and paced scenario replay both call the same event-processing path. A matching event produces an alert linked to the original event. Alerts are grouped into an incident by host and simulation run. Analyst status, assignment, and note changes are persisted and audit-logged. Reset removes records for one simulation run while retaining a reset audit entry.
 
-GitHub Pages cannot run the Go service. The workflow exports scenario and rule fixtures from the Go source; `web/app.js` uses those definitions in browser memory. It is explicitly labeled static demo mode and has no authentication or persistence.
+GitHub Pages cannot run the Go service. The workflow exports scenario and rule fixtures from the Go source; `web/app.js` applies those conditions in the browser. Simulation records are saved in that browser profile's local storage. This preview has no backend or authentication and is not the Go detector runtime.
 
 ## Deliberate limitations
 
-There is no Rust sensor, endpoint enrollment, heartbeat, event pagination, live push channel, user account/session model, mTLS, rate limiting, general-purpose correlation language, Sigma parser, YARA scanning, or response action. Sensitive read APIs require a configured administrator or analyst bearer token; only the administrator can reset simulations. This is not a full identity service. PostgreSQL support is exercised in CI against a PostgreSQL service but not against a local daemon here. JSON mode is unsuitable for concurrent service replicas, large datasets, or production retention needs. Keep the listener on loopback. HTTPS only encrypts the connection when configured; it does not provide endpoint identity.
+Endpoint enrollment, certificate-to-host binding or revocation, heartbeats, event pagination, live push, user account/session lifecycle, rate limiting, a general-purpose correlation language, Sigma parsing, YARA scanning, and response actions are not implemented. Optional mTLS verifies that a presented client certificate chains to a configured CA, but does not uniquely authorize or enroll its endpoint; ingestion still uses the shared bearer token. Sensitive read APIs require configured analyst or administrator bearer access. Only the administrator can reset simulations. This is not a full identity service. PostgreSQL integration tests are configured in CI; the updated job has not yet run on this source revision, and there is no local daemon here. JSON mode is unsuitable for concurrent replicas, large datasets, or production retention. Keep the listener on loopback unless TLS, trust, access control, and deployment are deliberately configured.

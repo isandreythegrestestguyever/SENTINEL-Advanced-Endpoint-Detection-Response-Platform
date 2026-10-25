@@ -9,6 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  agent:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: native
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: cargo fmt --manifest-path agent/Cargo.toml -- --check
+      - if: matrix.target == 'native'
+        run: cargo test --locked --manifest-path agent/Cargo.toml
+      - if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: cargo check --locked --target x86_64-pc-windows-msvc --manifest-path agent/Cargo.toml
+
   verify:
     runs-on: ubuntu-latest
     services:

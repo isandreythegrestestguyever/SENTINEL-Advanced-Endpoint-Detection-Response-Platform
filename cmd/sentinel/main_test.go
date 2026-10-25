@@ -2,10 +2,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -107,6 +116,17 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestEventValidationBoundsHostIdentity(t *testing.T) {
+	event := model.Event{ID: "bounded", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "host-1", Hostname: "HOST-1", Source: "test", Type: "process_start"}
+	if message := valid(event); message != "" {
+		t.Fatalf("valid event rejected: %s", message)
+	}
+	event.HostID = string(bytes.Repeat([]byte{'h'}, 129))
+	if message := valid(event); message == "" {
+		t.Fatal("event with oversized host_id was accepted")
+	}
+}
+
 func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
 	if err != nil {
@@ -128,6 +148,47 @@ func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	response = send(t, handler, http.MethodDelete, "/api/simulations/run-1", nil, "admin-token")
 	if response.Code != http.StatusOK {
 		t.Fatalf("administrator simulation reset status = %d, want 200", response.Code)
+	}
+}
+
+func TestTLSConfigurationCanRequireVerifiedClientCertificates(t *testing.T) {
+	t.Setenv("SENTINEL_TLS_CERT", "")
+	t.Setenv("SENTINEL_TLS_KEY", "")
+	t.Setenv("SENTINEL_CLIENT_CA", "")
+	config, err := tlsConfigFromEnv()
+	if err != nil || config.MinVersion != tls.VersionTLS13 || config.ClientAuth != tls.NoClientCert {
+		t.Fatalf("default TLS configuration = %#v, %v", config, err)
+	}
+
+	t.Setenv("SENTINEL_TLS_CERT", "server.crt")
+	t.Setenv("SENTINEL_TLS_KEY", "server.key")
+	caPath := filepath.Join(t.TempDir(), "client-ca.pem")
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-ca"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	certificate, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SENTINEL_CLIENT_CA", caPath)
+	config, err = tlsConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MinVersion != tls.VersionTLS13 || config.ClientAuth != tls.RequireAndVerifyClientCert || config.ClientCAs == nil {
+		t.Fatalf("mTLS configuration is incomplete: %#v", config)
+	}
+	if _, err := tlsConfigFromEnv(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SENTINEL_TLS_KEY", "")
+	if _, err := tlsConfigFromEnv(); err == nil {
+		t.Fatal("TLS configuration accepted a certificate without its key")
 	}
 }
 
@@ -204,6 +265,59 @@ func TestAllScenarioExpectedRulesThroughHTTPPath(t *testing.T) {
 		if err := db.RemoveSimulation(runID); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSimulationEndpointPreservesFixtureTimeAndScopesReport(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "test-token"}))
+	background := model.Event{ID: "background", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "other-host", Hostname: "OTHER", Source: "test", Type: "process_start", CommandLine: "powershell.exe -EncodedCommand sample"}
+	backgroundBody, err := json.Marshal(background)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := send(t, handler, http.MethodPost, "/api/ingest", backgroundBody, "test-token"); response.Code != http.StatusOK {
+		t.Fatalf("background event status = %d: %s", response.Code, response.Body.String())
+	}
+
+	requestBody := []byte(`{"scenario_id":"S01","run_id":"repeatable-run"}`)
+	response := send(t, handler, http.MethodPost, "/api/simulate", requestBody, "test-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("simulation status = %d: %s", response.Code, response.Body.String())
+	}
+	var report struct {
+		Success     bool `json:"success"`
+		AlertCount  int  `json:"alert_count"`
+		EventCount  int  `json:"event_count"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Success || report.AlertCount != 2 || report.EventCount != 2 {
+		t.Fatalf("simulation report does not describe this run: %#v", report)
+	}
+
+	fixtures := simulator.All()[0].Events
+	for _, event := range db.Snapshot().Events {
+		if event.SimulationRunID != "repeatable-run" {
+			continue
+		}
+		var fixtureTime time.Time
+		for _, fixture := range fixtures {
+			if event.ID == "repeatable-run-"+fixture.ID {
+				fixtureTime = fixture.Time
+				break
+			}
+		}
+		if fixtureTime.IsZero() || !event.Time.Equal(fixtureTime) {
+			t.Errorf("event %s time = %s, want deterministic fixture time %s", event.ID, event.Time, fixtureTime)
+		}
+	}
+	if response := send(t, handler, http.MethodPost, "/api/simulate", []byte(`{"scenario_id":"S01","run_id":" bad"}`), "test-token"); response.Code != http.StatusBadRequest {
+		t.Fatalf("simulation accepted invalid run id: %d", response.Code)
 	}
 }
 

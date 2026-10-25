@@ -1,0 +1,21 @@
+[package]
+name = "sentinel-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "sentinel_agent"
+
+[dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
+quick-xml = "0.38.3"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_EventLog"] }
