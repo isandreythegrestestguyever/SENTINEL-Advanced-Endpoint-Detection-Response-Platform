@@ -104,3 +104,59 @@ func TestStoreUpsertsAndPersistsEndpointHeartbeats(t *testing.T) {
 		t.Fatalf("expected one audit record per heartbeat, got %d", len(data.Audit))
 	}
 }
+
+func TestStorePrunesExpiredEvidenceAndKeepsRecentRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retention.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	cutoff := now.Add(-24 * time.Hour)
+	oldEvent := model.Event{ID: "old-event", HostID: "old-host", Hostname: "OLD-HOST", Time: cutoff.Add(-time.Hour), IngestedAt: cutoff.Add(-time.Hour), SimulationRunID: "old-run"}
+	oldAlert := model.Alert{ID: "old-alert", HostID: oldEvent.HostID, Hostname: oldEvent.Hostname, EventIDs: []string{oldEvent.ID}, CreatedAt: now, SimulationRunID: oldEvent.SimulationRunID, Status: "open"}
+	if err := s.AddEvent(oldEvent, []model.Alert{oldAlert}); err != nil {
+		t.Fatal(err)
+	}
+	freshEvent := model.Event{ID: "fresh-event", HostID: "fresh-host", Hostname: "FRESH-HOST", Time: now, IngestedAt: now, SimulationRunID: "fresh-run"}
+	freshAlert := model.Alert{ID: "fresh-alert", HostID: freshEvent.HostID, Hostname: freshEvent.Hostname, EventIDs: []string{freshEvent.ID}, CreatedAt: now, SimulationRunID: freshEvent.SimulationRunID, Status: "open"}
+	if err := s.AddEvent(freshEvent, []model.Alert{freshAlert}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertEndpoint(model.Endpoint{HostID: "old-host", LastHeartbeat: cutoff.Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertEndpoint(model.Endpoint{HostID: "fresh-host", LastHeartbeat: now}); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.Audit = append(s.Audit, map[string]any{"action": "old.audit", "time": cutoff.Add(-time.Hour)})
+	if err := s.save(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+
+	stats, err := s.PruneBefore(cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (PruneStats{Events: 1, Alerts: 1, Incidents: 1, Audit: 2, Endpoints: 1}) {
+		t.Fatalf("unexpected retention counts: %#v", stats)
+	}
+	data, err := s.ReadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Events) != 1 || data.Events[0].ID != freshEvent.ID || len(data.Alerts) != 1 || data.Alerts[0].ID != freshAlert.ID || len(data.Incidents) != 1 || data.Incidents[0].AlertIDs[0] != freshAlert.ID || len(data.Endpoints) != 1 || data.Endpoints[0].HostID != "fresh-host" {
+		t.Fatalf("retention left inconsistent or expired records: %#v", data)
+	}
+	for _, entry := range data.Audit {
+		if entry["action"] == "old.audit" {
+			t.Fatal("expired audit record was retained")
+		}
+	}
+	if data.Audit[len(data.Audit)-1]["action"] != "retention.pruned" {
+		t.Fatalf("retention action was not audit logged: %#v", data.Audit)
+	}
+}

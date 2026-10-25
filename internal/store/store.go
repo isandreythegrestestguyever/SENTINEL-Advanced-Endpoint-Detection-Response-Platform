@@ -21,8 +21,17 @@ type Repository interface {
 	RemoveSimulation(runID string) error
 	AddEvent(event model.Event, alerts []model.Alert) error
 	UpsertEndpoint(endpoint model.Endpoint) error
+	PruneBefore(cutoff time.Time) (PruneStats, error)
 	Ping(context.Context) error
 	Close()
+}
+
+type PruneStats struct {
+	Events    int `json:"events"`
+	Alerts    int `json:"alerts"`
+	Incidents int `json:"incidents"`
+	Audit     int `json:"audit"`
+	Endpoints int `json:"endpoints"`
 }
 
 type Data struct {
@@ -188,6 +197,96 @@ func (s *Store) UpsertEndpoint(endpoint model.Endpoint) error {
 	s.Endpoints = append(s.Endpoints, endpoint)
 	s.Audit = append(s.Audit, map[string]any{"action": "endpoint.heartbeat", "host_id": endpoint.HostID, "time": endpoint.LastHeartbeat})
 	return s.save()
+}
+
+func (s *Store) PruneBefore(cutoff time.Time) (PruneStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var stats PruneStats
+	expiredEvents := make(map[string]bool)
+	events := s.Events[:0]
+	for _, event := range s.Events {
+		seen := event.IngestedAt
+		if seen.IsZero() {
+			seen = event.Time
+		}
+		if seen.Before(cutoff) {
+			stats.Events++
+			expiredEvents[event.ID] = true
+			continue
+		}
+		events = append(events, event)
+	}
+	s.Events = events
+	keptAlerts := s.Alerts[:0]
+	keptAlertIDs := make(map[string]bool, len(s.Alerts))
+	for _, alert := range s.Alerts {
+		expired := alert.CreatedAt.Before(cutoff)
+		for _, eventID := range alert.EventIDs {
+			expired = expired || expiredEvents[eventID]
+		}
+		if expired {
+			stats.Alerts++
+			continue
+		}
+		keptAlerts = append(keptAlerts, alert)
+		keptAlertIDs[alert.ID] = true
+	}
+	s.Alerts = keptAlerts
+	keptIncidents := s.Incidents[:0]
+	for _, incident := range s.Incidents {
+		if incident.UpdatedAt.Before(cutoff) {
+			stats.Incidents++
+			continue
+		}
+		alertIDs := incident.AlertIDs[:0]
+		for _, alertID := range incident.AlertIDs {
+			if keptAlertIDs[alertID] {
+				alertIDs = append(alertIDs, alertID)
+			}
+		}
+		incident.AlertIDs = alertIDs
+		if len(incident.AlertIDs) == 0 {
+			stats.Incidents++
+			continue
+		}
+		keptIncidents = append(keptIncidents, incident)
+	}
+	s.Incidents = keptIncidents
+	keptAudit := s.Audit[:0]
+	for _, entry := range s.Audit {
+		if timestamp, ok := auditTimestamp(entry["time"]); ok && timestamp.Before(cutoff) {
+			stats.Audit++
+			continue
+		}
+		keptAudit = append(keptAudit, entry)
+	}
+	s.Audit = keptAudit
+	keptEndpoints := s.Endpoints[:0]
+	for _, endpoint := range s.Endpoints {
+		if endpoint.LastHeartbeat.Before(cutoff) {
+			stats.Endpoints++
+			continue
+		}
+		keptEndpoints = append(keptEndpoints, endpoint)
+	}
+	s.Endpoints = keptEndpoints
+	if stats.Events+stats.Alerts+stats.Incidents+stats.Audit+stats.Endpoints > 0 {
+		s.Audit = append(s.Audit, map[string]any{"action": "retention.pruned", "cutoff": cutoff.UTC(), "counts": stats, "time": time.Now().UTC()})
+	}
+	return stats, s.save()
+}
+
+func auditTimestamp(value any) (time.Time, bool) {
+	switch value := value.(type) {
+	case time.Time:
+		return value, true
+	case string:
+		timestamp, err := time.Parse(time.RFC3339Nano, value)
+		return timestamp, err == nil
+	default:
+		return time.Time{}, false
+	}
 }
 
 func (s *Store) save() error {

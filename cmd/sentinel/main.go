@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,10 @@ func main() {
 		log.Printf("SENTINEL storage: local JSON development mode")
 	}
 	defer db.Close()
+	retentionWindow, err := parseRetentionWindow(os.Getenv("SENTINEL_RETENTION_DAYS"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	token := os.Getenv("SENTINEL_ADMIN_TOKEN")
 	analystToken := os.Getenv("SENTINEL_ANALYST_TOKEN")
 	if token == "" {
@@ -81,6 +86,9 @@ func main() {
 	}
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if retentionWindow > 0 {
+		go retentionLoop(shutdownContext, db, retentionWindow)
+	}
 	select {
 	case err := <-serveErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -97,6 +105,42 @@ func main() {
 		}
 		if err := <-serveErrors; !errors.Is(err, http.ErrServerClosed) && err != nil {
 			log.Printf("HTTP server stopped: %v", err)
+		}
+	}
+}
+
+func parseRetentionWindow(raw string) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days < 0 || days > 36500 {
+		return 0, errors.New("SENTINEL_RETENTION_DAYS must be an integer from 0 to 36500")
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+func retentionLoop(ctx context.Context, db store.Repository, retentionWindow time.Duration) {
+	prune := func() {
+		cutoff := time.Now().UTC().Add(-retentionWindow)
+		stats, err := db.PruneBefore(cutoff)
+		if err != nil {
+			log.Printf("retention cleanup failed: %v", err)
+			return
+		}
+		if stats.Events+stats.Alerts+stats.Incidents+stats.Audit+stats.Endpoints > 0 {
+			log.Printf("retention removed records: %+v", stats)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
 		}
 	}
 }

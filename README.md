@@ -30,6 +30,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 | `SENTINEL_DATABASE_URL` | unset | PostgreSQL connection string; enables migrations and SQL storage |
 | `SENTINEL_ADMIN_TOKEN` | Random per start | Administrator bearer token; required for simulation reset |
 | `SENTINEL_ANALYST_TOKEN` | unset | Optional distinct analyst bearer token; can read data and submit events or analyst updates |
+| `SENTINEL_RETENTION_DAYS` | `0` (disabled) | Remove service records older than this many days; cleanup runs at startup and hourly |
 | `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
 | `SENTINEL_CLIENT_CA` | unset | Verify presented client certificates; require a host-bound certificate on ingest; requires HTTPS |
 
@@ -40,6 +41,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Bounded count correlations for repeated authentication failures, file modifications, and same-destination network activity; correlated alerts include every supporting event ID.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
 - Bounded per-IP rate limits on telemetry and write routes, with `Retry-After` responses and a capped in-process bucket map.
+- Optional service-side retention for expired telemetry, dependent alerts/cases, audit entries, and stale heartbeat records; disabled unless configured.
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.

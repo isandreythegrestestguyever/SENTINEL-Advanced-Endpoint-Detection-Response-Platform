@@ -117,6 +117,26 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestRetentionWindowConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  time.Duration
+		bad   bool
+	}{
+		{input: "", want: 0},
+		{input: "0", want: 0},
+		{input: "30", want: 30 * 24 * time.Hour},
+		{input: "-1", bad: true},
+		{input: "36501", bad: true},
+		{input: "many", bad: true},
+	} {
+		got, err := parseRetentionWindow(test.input)
+		if (err != nil) != test.bad || (!test.bad && got != test.want) {
+			t.Errorf("parseRetentionWindow(%q) = %s, %v; want %s, bad=%v", test.input, got, err, test.want, test.bad)
+		}
+	}
+}
+
 func TestRateLimiterBoundsWritesByClientAndRefills(t *testing.T) {
 	now := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
 	limiter := newRateLimiter()

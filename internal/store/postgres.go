@@ -268,6 +268,47 @@ func (s *PostgresStore) UpsertEndpoint(endpoint model.Endpoint) error {
 	return tx.Commit(ctx)
 }
 
+func (s *PostgresStore) PruneBefore(cutoff time.Time) (PruneStats, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PruneStats{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var stats PruneStats
+	queries := []struct {
+		destination *int
+		query       string
+	}{
+		{&stats.Alerts, `DELETE FROM alerts WHERE created_at < $1 OR alert_id IN (SELECT ae.alert_id FROM alert_events ae JOIN events e ON e.event_id=ae.event_id WHERE e.ingested_at < $1)`},
+		{&stats.Events, `DELETE FROM events WHERE ingested_at < $1`},
+		{&stats.Incidents, `DELETE FROM incidents WHERE updated_at < $1 OR NOT EXISTS (SELECT 1 FROM incident_alerts ia WHERE ia.incident_id=incidents.incident_id)`},
+		{&stats.Endpoints, `DELETE FROM endpoints WHERE last_heartbeat < $1`},
+		{&stats.Audit, `DELETE FROM audit_log WHERE created_at < $1`},
+	}
+	for _, item := range queries {
+		result, err := tx.Exec(ctx, item.query, cutoff)
+		if err != nil {
+			return PruneStats{}, err
+		}
+		count := result.RowsAffected()
+		*item.destination = int(count)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE incidents SET payload=jsonb_set(payload, '{alert_ids}', COALESCE((SELECT jsonb_agg(ia.alert_id ORDER BY ia.alert_id) FROM incident_alerts ia WHERE ia.incident_id=incidents.incident_id), '[]'::jsonb))`); err != nil {
+		return PruneStats{}, err
+	}
+	if stats.Events+stats.Alerts+stats.Incidents+stats.Audit+stats.Endpoints > 0 {
+		if err := insertAudit(ctx, tx, map[string]any{"action": "retention.pruned", "cutoff": cutoff.UTC(), "counts": stats, "time": time.Now().UTC()}); err != nil {
+			return PruneStats{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PruneStats{}, err
+	}
+	return stats, nil
+}
+
 func insertAlert(ctx context.Context, tx pgx.Tx, alert model.Alert) error {
 	payload, err := json.Marshal(alert)
 	if err != nil {

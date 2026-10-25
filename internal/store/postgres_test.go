@@ -62,6 +62,35 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 	if persistedEndpoint == nil || persistedEndpoint.AgentVersion != "0.2.0" || !persistedEndpoint.LastHeartbeat.Equal(endpoint.LastHeartbeat) {
 		t.Fatalf("PostgreSQL endpoint heartbeat upsert = %#v", persistedEndpoint)
 	}
+	retentionRun := "retention-run-" + suffix
+	retentionCutoff := now.Add(-24 * time.Hour)
+	oldEvent := model.Event{ID: "retention-old-event-" + suffix, SchemaVersion: "1.0", Time: now.Add(-48 * time.Hour), IngestedAt: now.Add(-48 * time.Hour), HostID: "retention-host", Hostname: "RETENTION-HOST", Source: "integration-test", Type: "process_start", SimulationRunID: retentionRun}
+	oldAlert := model.Alert{ID: "retention-old-alert-" + suffix, RuleID: "RETENTION", Title: "Expired event alert", Severity: "low", Confidence: 50, HostID: oldEvent.HostID, Hostname: oldEvent.Hostname, EventIDs: []string{oldEvent.ID}, CreatedAt: now, SimulationRunID: retentionRun, Status: "open"}
+	if err := db.AddEvent(oldEvent, []model.Alert{oldAlert}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.pool.Exec(ctx, `INSERT INTO audit_log(created_at,payload) VALUES($1,$2)`, now.Add(-48*time.Hour), `{"action":"expired.test"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertEndpoint(model.Endpoint{HostID: "expired-endpoint-" + suffix, LastHeartbeat: now.Add(-48 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	pruned, err := db.PruneBefore(retentionCutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned.Events != 1 || pruned.Alerts != 1 || pruned.Incidents != 1 || pruned.Audit < 1 || pruned.Endpoints != 1 {
+		t.Fatalf("unexpected PostgreSQL retention counts: %#v", pruned)
+	}
+	afterRetention := db.Snapshot()
+	if containsEvent(afterRetention.Events, oldEvent.ID) || containsAlert(afterRetention.Alerts, oldAlert.ID) {
+		t.Fatal("PostgreSQL retention left expired event evidence")
+	}
+	for _, entry := range afterRetention.Audit {
+		if entry["action"] == "expired.test" {
+			t.Fatal("PostgreSQL retention left expired audit data")
+		}
+	}
 	status, note, assignee := "acknowledged", "triaged", "test-analyst"
 	updatedAlert, found, err := db.UpdateAlert(alert.ID, &status, &note, &assignee)
 	if err != nil || !found || updatedAlert.Status != status || updatedAlert.AnalystNotes != note || updatedAlert.Assignee != assignee {
@@ -105,6 +134,9 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 		}
 	}
 	if err := db.RemoveSimulation(runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RemoveSimulation(retentionRun); err != nil {
 		t.Fatal(err)
 	}
 	after := db.Snapshot()
