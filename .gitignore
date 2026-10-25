@@ -3,3 +3,6 @@ sentinel-data.json.tmp
 *.log
 .DS_Store
 /agent/target/
+/node_modules/
+/playwright-report/
+/test-results/

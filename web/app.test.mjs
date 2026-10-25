@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -314,7 +313,11 @@ test('browser replay evaluator meets every Go-exported scenario assertion', () =
   const exported = execFileSync('go', ['run', './cmd/export-demo'], {
     cwd: repositoryRoot,
     encoding: 'utf8',
-    env: { ...process.env, GOCACHE: process.env.GOCACHE || join(tmpdir(), 'sentinel-go-cache') }
+    env: {
+      ...process.env,
+      GOMODCACHE: process.env.GOMODCACHE || '/tmp/sentinel-gomodcache',
+      GOCACHE: process.env.GOCACHE || '/tmp/sentinel-go-cache'
+    }
   });
   const fixtureData = JSON.parse(exported);
   const context = startApp(new Map());

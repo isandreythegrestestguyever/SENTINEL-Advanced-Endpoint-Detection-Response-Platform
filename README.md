@@ -84,11 +84,15 @@ See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGI
 
 ## Verification
 
-Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, `cargo fmt --manifest-path agent/Cargo.toml -- --check`, and `cargo test --locked --manifest-path agent/Cargo.toml`. GitHub Actions passed the PostgreSQL-backed tests and Windows MSVC cross-target compile on the current source release. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
+Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, and Rust format/tests. Real browser flows use `npm ci`, `npx playwright install chromium`, and `npm run test:e2e`; Playwright starts an isolated Go service and exercises analyst-token validation, S01 ingestion, Sigma evidence, incident display, and report export. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
+
+The screenshot below is captured by the passing Playwright run. Every event shown is a deterministic synthetic fixture; the screenshot does not show a live endpoint.
+
+![SENTINEL simulated S01 replay after a passing browser run](screenshots/sentinel-range.png)
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. The active Sigma subset is bundled and read-only; dynamic authoring, persistence, broader modifier/logsource support, and multi-event aggregation are not implemented. The one-event test workspace does not change active rules. sigma-go v0.6.5 documents itself as draft-spec; no universal Sigma compatibility is claimed. YARA scanning is not implemented. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, additional browser end-to-end workflows, and a general-purpose correlation language. The active Sigma subset is bundled and read-only; dynamic authoring, persistence, broader modifier/logsource support, and multi-event aggregation are not implemented. The one-event test workspace does not change active rules. sigma-go v0.6.5 documents itself as draft-spec; no universal Sigma compatibility is claimed. YARA scanning is not implemented. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant.
 
 ## License
 
