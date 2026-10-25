@@ -148,6 +148,62 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 }
 
+func TestBundledSigmaRuleCreatesAlertThroughAuthenticatedIngest(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token"}))
+	event := model.Event{
+		ID: "sigma-live-1", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "endpoint-1",
+		Hostname: "ENDPOINT-1", Source: "windows-eventlog", Category: "process", Type: "process_start",
+		Image: `C:\Users\Public\Tools\support.exe`,
+	}
+	body, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := send(t, handler, http.MethodPost, "/api/ingest", body, "admin-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("Sigma-backed ingestion status = %d: %s", response.Code, response.Body.String())
+	}
+	var accepted struct {
+		Alerts []model.Alert `json:"alerts"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted.Alerts) != 1 {
+		t.Fatalf("expected one Sigma alert, got %#v", accepted.Alerts)
+	}
+	alert := accepted.Alerts[0]
+	if alert.RuleID != "SEN-SIGMA-PUBLIC-001" || alert.RuleRevision != 1 || alert.Severity != "medium" || alert.Confidence != 0 || len(alert.EventIDs) != 1 || alert.EventIDs[0] != event.ID || !strings.Contains(alert.Evidence, "7b0cbd19-cc70-4a9b-b6d1-87c51756a422") {
+		t.Fatalf("unexpected active Sigma alert: %#v", alert)
+	}
+	response = send(t, handler, http.MethodGet, "/api/rules", nil, "admin-token")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"kind":"sigma"`) || !strings.Contains(response.Body.String(), "SEN-SIGMA-PUBLIC-001") {
+		t.Fatalf("active Sigma rule missing from catalog: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	event.ID = "sigma-live-2"
+	event.Category = "network"
+	event.Type = "network_connection"
+	body, err = json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = send(t, handler, http.MethodPost, "/api/ingest", body, "admin-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("unrelated event ingest status = %d: %s", response.Code, response.Body.String())
+	}
+	accepted = struct {
+		Alerts []model.Alert `json:"alerts"`
+	}{}
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil || len(accepted.Alerts) != 0 {
+		t.Fatalf("process_creation Sigma rule matched unrelated source: alerts=%#v err=%v", accepted.Alerts, err)
+	}
+}
+
 func TestAuthRequiresBearerScheme(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	for _, value := range []string{"", "test-token", "Bearer ", "Bearer wrong"} {

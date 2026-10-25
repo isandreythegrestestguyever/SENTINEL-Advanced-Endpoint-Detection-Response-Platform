@@ -179,6 +179,10 @@ type AccessTokens struct {
 }
 
 func routes(db store.Repository, tokens AccessTokens) http.Handler {
+	sigmaEngine, err := detection.DefaultSigmaEngine()
+	if err != nil {
+		panic(fmt.Errorf("load bundled Sigma rules: %w", err))
+	}
 	mux := http.NewServeMux()
 	read := func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +435,7 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		}
 		jsonOut(w, map[string]any{"reset": true, "run_id": runID})
 	})
-	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, detection.Rules) })
+	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, detection.AllRules(sigmaEngine)) })
 	mux.HandleFunc("POST /api/rules/test", func(w http.ResponseWriter, r *http.Request) {
 		if accessRole(r, tokens) == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -517,7 +521,7 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 			http.Error(w, "client certificate is not enrolled for this host_id", http.StatusForbidden)
 			return
 		}
-		process(w, db, e)
+		process(w, db, e, sigmaEngine)
 	})
 	mux.HandleFunc("/api/simulate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -561,7 +565,7 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		for _, event := range selected.Events {
 			event.SimulationRunID = req.RunID
 			event.ID = req.RunID + "-" + event.ID
-			if _, err := processEvent(db, event); err != nil {
+			if _, err := processEventWithSigma(db, event, sigmaEngine); err != nil {
 				http.Error(w, "could not persist simulation event", http.StatusInternalServerError)
 				return
 			}
@@ -630,8 +634,8 @@ func evaluateScenario(expectedIDs, actualIDs []string) scenarioEvaluation {
 	return out
 }
 
-func process(w http.ResponseWriter, db store.Repository, e model.Event) {
-	a, err := processEvent(db, e)
+func process(w http.ResponseWriter, db store.Repository, e model.Event, sigmaEngine *detection.SigmaEngine) {
+	a, err := processEventWithSigma(db, e, sigmaEngine)
 	if errors.Is(err, store.ErrDuplicateEvent) {
 		http.Error(w, "event ID already exists", http.StatusConflict)
 		return
@@ -653,6 +657,10 @@ func readData(w http.ResponseWriter, db store.Repository) (store.Data, bool) {
 }
 
 func processEvent(db store.Repository, e model.Event) ([]model.Alert, error) {
+	return processEventWithSigma(db, e, nil)
+}
+
+func processEventWithSigma(db store.Repository, e model.Event, sigmaEngine *detection.SigmaEngine) ([]model.Alert, error) {
 	model.RedactSensitive(&e)
 	e.IngestedAt = time.Now().UTC()
 	previous, err := db.RecentEvents(e, 10*time.Minute, 500)
@@ -660,10 +668,15 @@ func processEvent(db store.Repository, e model.Event) ([]model.Alert, error) {
 		return nil, err
 	}
 	matches := detection.Evaluate(e, previous)
+	sigmaMatches, err := sigmaEngine.Evaluate(e)
+	if err != nil {
+		return nil, err
+	}
+	matches = append(matches, sigmaMatches...)
 	alerts := []model.Alert{}
 	for _, finding := range matches {
 		rule := finding.Rule
-		alerts = append(alerts, model.Alert{ID: fmt.Sprintf("ALT-%s-%s", e.ID, rule.ID), RuleID: rule.ID, Title: rule.Title, Severity: rule.Severity, Confidence: rule.Confidence, Technique: rule.Technique, HostID: e.HostID, Hostname: e.Hostname, EventIDs: finding.EventIDs, Evidence: finding.Evidence, CreatedAt: time.Now().UTC(), SimulationRunID: e.SimulationRunID, Status: "open"})
+		alerts = append(alerts, model.Alert{ID: fmt.Sprintf("ALT-%s-%s", e.ID, rule.ID), RuleID: rule.ID, RuleRevision: rule.Revision, Title: rule.Title, Severity: rule.Severity, Confidence: rule.Confidence, Technique: rule.Technique, HostID: e.HostID, Hostname: e.Hostname, EventIDs: finding.EventIDs, Evidence: finding.Evidence, CreatedAt: time.Now().UTC(), SimulationRunID: e.SimulationRunID, Status: "open"})
 	}
 	if err := db.AddEvent(e, alerts); err != nil {
 		return nil, err

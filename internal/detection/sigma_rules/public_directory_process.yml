@@ -1,0 +1,20 @@
+title: Process execution from a public user directory
+id: 7b0cbd19-cc70-4a9b-b6d1-87c51756a422
+sentinel_id: SEN-SIGMA-PUBLIC-001
+status: stable
+description: Detect a Windows process image under the broadly writable Users Public directory.
+author: SENTINEL project
+date: 2026-10-25
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image|contains: '\users\public\'
+  condition: selection
+falsepositives:
+  - Approved software staging or support tools launched from the Public directory.
+level: medium
+tags:
+  - attack.execution
+  - attack.t1204.002

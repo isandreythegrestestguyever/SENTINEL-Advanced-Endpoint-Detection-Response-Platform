@@ -27,6 +27,7 @@ type Event struct {
 type Alert struct {
 	ID              string    `json:"id"`
 	RuleID          string    `json:"rule_id"`
+	RuleRevision    int       `json:"rule_revision,omitempty"`
 	Title           string    `json:"title"`
 	Severity        string    `json:"severity"`
 	Confidence      int       `json:"confidence"`

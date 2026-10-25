@@ -37,7 +37,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 ## What works
 
 - Versioned Sentinel event envelope (`schema_version: 1.0`) with source, host, timestamp, process metadata, destination, ATT&CK label, and simulation provenance.
-- Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
+- Six enabled, documented native rules plus one bundled, enabled Windows process-creation Sigma rule. Active Sigma is bounded to one mapped field and `contains`; both native and Sigma findings use authenticated ingestion and preserve evidence and rule revision.
 - Bounded count correlations for repeated authentication failures, file modifications, and same-destination network activity; correlated alerts include every supporting event ID.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
 - Common command-line credential arguments and credential-named custom fields are redacted by the Windows agent before spooling and by the service before detection/storage; this narrow filter is not general-purpose DLP.
@@ -88,7 +88,7 @@ Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node 
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. Sigma is parsed only in the local one-event test workspace; rules are not persisted or applied to ingestion, the v0.6.5 library documents itself as draft-spec, and multi-event aggregation is not set up. YARA scanning is not implemented. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. The active Sigma subset is bundled and read-only; dynamic authoring, persistence, broader modifier/logsource support, and multi-event aggregation are not implemented. The one-event test workspace does not change active rules. sigma-go v0.6.5 documents itself as draft-spec; no universal Sigma compatibility is claimed. YARA scanning is not implemented. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant.
 
 ## License
 

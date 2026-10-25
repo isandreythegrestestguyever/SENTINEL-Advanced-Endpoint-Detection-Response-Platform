@@ -8,7 +8,11 @@ import (
 )
 
 func main() {
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"rules": detection.Rules, "scenarios": simulator.All()}); err != nil {
+	sigmaEngine, err := detection.DefaultSigmaEngine()
+	if err != nil {
+		panic(err)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"rules": detection.AllRules(sigmaEngine), "scenarios": simulator.All()}); err != nil {
 		panic(err)
 	}
 }

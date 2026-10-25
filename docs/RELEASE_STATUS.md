@@ -17,6 +17,7 @@
 - Reproducible Go detection microbenchmarks cover single-event and threshold-correlation evaluation. A five-run local baseline is recorded in `benchmarks/README.md`; it is not an end-to-end ingestion or capacity benchmark.
 - Sentinel Range exports a simulation-only JSON archive of replay records, linked audit entries, scenarios, and saved reports; the local service export follows all event pages before assembling it.
 - Authenticated local `/api/rules/test` parses a bounded Sigma YAML document with sigma-go v0.6.5 and reports selection/condition results against one normalized event without writing to the database. Rulebook UI shows this workspace in local-service mode and explains that it is unavailable on GitHub Pages.
+- The service also loads one versioned bundled Windows `process_creation` Sigma rule at startup and evaluates it during authenticated event ingestion. The integration test verifies the generated evidence-linked alert, rule revision, API catalog entry, and logsource boundary. GitHub Pages exports the same rule metadata for local browser simulation; it does not run sigma-go or provide the Go detector.
 
 ## Requires Windows validation
 
@@ -26,7 +27,7 @@ The Rust Windows service subscribes to selected Security and Sysmon channels usi
 
 - Automated endpoint enrollment, certificate revocation/rotation, endpoint configuration management, or automatic provisioning. mTLS host binding depends on out-of-band per-host certificate provisioning and still requires the shared bearer token. Heartbeat source/capability values are self-reported; no Windows runtime check verifies that configured channels are collecting successfully.
 - User accounts, web sessions, a full RBAC/analyst identity service, or a live push channel.
-- Sigma rules are not persisted or activated in the ingest detector; multi-event Sigma aggregation is not configured, the logsource category/service are not used to filter test events, and sigma-go v0.6.5 documents itself as draft-spec. No universal Sigma compatibility is claimed. YARA-X scanning, rule authoring/version history, advanced correlation language, containment, remote commands, or auto-update are also not implemented.
+- Dynamic Sigma rule authoring, persistence, enable/disable management, and version history are not implemented. The active Sigma subset accepts only bundled Windows `process_creation` rules with one selection, one mapped field, one scalar string, and `contains`; multi-event aggregation is unsupported. sigma-go v0.6.5 documents itself as draft-spec, so no universal Sigma compatibility is claimed. YARA-X scanning, advanced correlation language, containment, remote commands, and auto-update are also not implemented.
 - A Next.js frontend, end-to-end performance/load suite, signed release pipeline, production deployment profile, formal audit-log tamper evidence, or external security assessment.
 
 The sensor is read-only and has no response action. The event model is versioned and OCSF-inspired, not OCSF-compliant.

@@ -10,6 +10,8 @@ import (
 
 type Rule struct {
 	ID            string `json:"id"`
+	Kind          string `json:"kind,omitempty"`
+	SigmaID       string `json:"sigma_id,omitempty"`
 	Title         string `json:"title"`
 	Description   string `json:"description"`
 	Severity      string `json:"severity"`
@@ -93,6 +95,30 @@ func matchesField(rule Rule, event model.Event) bool {
 		value = event.Image
 	case "type":
 		value = event.Type
+	case "category":
+		value = event.Category
+	case "source":
+		value = event.Source
+	case "hostname":
+		value = event.Hostname
+	case "host_id":
+		value = event.HostID
+	case "user":
+		value = event.User
+	case "destination":
+		value = event.Destination
+	case "process_id":
+		if event.ProcessID != 0 {
+			value = fmt.Sprint(event.ProcessID)
+		}
+	case "parent_process_id":
+		if event.ParentProcessID != 0 {
+			value = fmt.Sprint(event.ParentProcessID)
+		}
+	case "technique":
+		value = event.Technique
+	default:
+		value = event.Fields[rule.Field]
 	}
 	return strings.Contains(strings.ToLower(value), strings.ToLower(rule.Contains))
 }

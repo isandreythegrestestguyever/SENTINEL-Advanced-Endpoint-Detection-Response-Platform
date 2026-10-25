@@ -118,6 +118,21 @@ test('rulebook exposes a local Sigma test workspace and labels its Pages boundar
   assert.doesNotMatch(hosted, /data-action="test-sigma"/);
 });
 
+test('rulebook identifies bundled Sigma rules and does not invent a confidence score', () => {
+  const context = startApp(new Map());
+  vm.runInContext(`state.rules=[{
+    id:'SEN-SIGMA-PUBLIC-001',sigma_id:'7b0cbd19-cc70-4a9b-b6d1-87c51756a422',kind:'sigma',
+    title:'Process execution from a public user directory',description:'Bundled test rule',severity:'medium',
+    confidence:0,technique:'T1204.002',field:'image',contains:'\\\\users\\\\public\\\\',
+    false_positive:'Approved support tools',revision:1,enabled:true
+  }]`, context);
+  const rulebook = vm.runInContext('renderRules()', context);
+  assert.match(rulebook, /SEN-SIGMA-PUBLIC-001/);
+  assert.match(rulebook, /SIGMA 7b0cbd19-cc70-4a9b-b6d1-87c51756a422/);
+  assert.match(rulebook, /NOT SCORED/);
+  assert.match(rulebook, /run through authenticated ingest/);
+});
+
 test('local token entry validates against the service without a blocked browser prompt', () => {
   assert.doesNotMatch(source, /\bprompt\s*\(/);
   assert.match(source, /data-action="test-sigma"/);
