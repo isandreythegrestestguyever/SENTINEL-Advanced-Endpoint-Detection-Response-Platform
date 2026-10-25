@@ -4,6 +4,7 @@
 
 - Go service event ingestion, bounded rule evaluation, evidence-linked alerts, incident grouping, analyst updates, local JSON persistence, and run-scoped simulation cleanup.
 - Seven deterministic synthetic scenarios through the Go HTTP ingestion/detection path, including a benign baseline that expects no alerts. The browser replay result now fails for missed expected rules or unexpected alert rules.
+- Playwright browser verification starts an isolated Go service, checks analyst-token rejection and acceptance, replays all seven scenarios through authenticated ingestion, compares each exported result with its declared ground truth, and inspects S01 Sigma evidence and the resulting simulation incident.
 - PostgreSQL migration and repository integration tests passed against PostgreSQL 17 in GitHub Actions. Local PostgreSQL runtime testing was unavailable because Docker was not running.
 - Static GitHub Pages preview with seven exported scenarios, browser-side rule evaluation, replay playback controls, timeline scrubbing, labeled ground truth/detected techniques, downloadable reports, browser-profile persistence, and additive simulation archive import/export.
 - Rust event XML parsing, normalization, bounded event validation, SQLite WAL spool, duplicate suppression, payload cap, bookmarks, and remote transport policy in portable tests.
@@ -21,7 +22,7 @@
 
 ## Requires Windows validation
 
-The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. The `x86_64-pc-windows-msvc` cross-target compile, including the heartbeat sender, passed in GitHub Actions on commit `e8c302e`; this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat cross-compilation as runtime proof.
+The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. The `x86_64-pc-windows-msvc` cross-target compile, including the heartbeat sender, passed in [GitHub Actions for commit `5ced21e`](https://github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/actions/runs/40152717208); this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat cross-compilation as runtime proof.
 
 ## Not implemented
 
