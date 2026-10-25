@@ -203,14 +203,34 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		}
 		by := map[string]int{}
 		hosts := map[string]bool{}
+		liveEvents, simulationEvents := 0, 0
+		liveAlerts, simulationAlerts := 0, 0
+		liveIncidents, simulationIncidents := 0, 0
+		openSimulationIncidents := 0
 		for _, a := range d.Alerts {
 			if a.SimulationRunID == "" {
+				liveAlerts++
 				by[a.Severity]++
+			} else {
+				simulationAlerts++
 			}
 		}
 		for _, ev := range d.Events {
 			if ev.SimulationRunID == "" {
+				liveEvents++
 				hosts[ev.HostID] = true
+			} else {
+				simulationEvents++
+			}
+		}
+		for _, incident := range d.Incidents {
+			if incident.SimulationRunID == "" {
+				liveIncidents++
+			} else {
+				simulationIncidents++
+				if incident.Status == "open" {
+					openSimulationIncidents++
+				}
 			}
 		}
 		connected := 0
@@ -220,7 +240,16 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 				hosts[endpoint.HostID] = true
 			}
 		}
-		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": connected, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT"})
+		jsonOut(w, map[string]any{
+			"monitored_endpoints": len(hosts), "connected_sensors": connected,
+			"open_incidents": countLive(d.Incidents), "alerts_by_severity": by,
+			// Keep the legacy totals while exposing provenance-separated counts.
+			"events": len(d.Events), "alerts": len(d.Alerts),
+			"live_events": liveEvents, "live_alerts": liveAlerts, "live_incidents": liveIncidents,
+			"simulation_events": simulationEvents, "simulation_alerts": simulationAlerts, "simulation_incidents": simulationIncidents,
+			"simulation_open_incidents": openSimulationIncidents,
+			"mode":                      "LOCAL DEVELOPMENT",
+		})
 	}))
 	mux.HandleFunc("/api/events", read(func(w http.ResponseWriter, r *http.Request) {
 		limit := 100

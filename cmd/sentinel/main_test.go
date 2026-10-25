@@ -99,12 +99,52 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 	patchJSON(t, handler, "/api/incidents/"+incidents[0].ID, `{"status":"investigating","analyst_notes":"triaged"}`, "test-token", http.StatusOK)
 
+	var overview struct {
+		Events              int `json:"events"`
+		Alerts              int `json:"alerts"`
+		LiveEvents          int `json:"live_events"`
+		LiveAlerts          int `json:"live_alerts"`
+		LiveIncidents       int `json:"live_incidents"`
+		SimulationEvents    int `json:"simulation_events"`
+		SimulationAlerts    int `json:"simulation_alerts"`
+		SimulationIncidents int `json:"simulation_incidents"`
+		SimulationOpenCases int `json:"simulation_open_incidents"`
+	}
+	response = send(t, handler, http.MethodGet, "/api/overview", nil, "test-token")
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&overview) != nil {
+		t.Fatalf("overview request failed: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if overview.Events != 1 || overview.Alerts != 1 || overview.LiveEvents != 0 || overview.LiveAlerts != 0 || overview.LiveIncidents != 0 || overview.SimulationEvents != 1 || overview.SimulationAlerts != 1 || overview.SimulationIncidents != 1 || overview.SimulationOpenCases != 0 {
+		t.Fatalf("simulation-only counts crossed the live boundary: %#v", overview)
+	}
+
+	liveEvent := event
+	liveEvent.ID = "evt-live-1"
+	liveEvent.HostID = "prod-host-1"
+	liveEvent.Hostname = "PROD-HOST-1"
+	liveEvent.SimulationRunID = ""
+	liveBody, err := json.Marshal(liveEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = send(t, handler, http.MethodPost, "/api/ingest", liveBody, "test-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("live ingest status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	response = send(t, handler, http.MethodGet, "/api/overview", nil, "test-token")
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&overview) != nil {
+		t.Fatalf("overview request failed: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if overview.Events != 2 || overview.Alerts != 2 || overview.LiveEvents != 1 || overview.LiveAlerts != 1 || overview.LiveIncidents != 1 || overview.SimulationEvents != 1 || overview.SimulationAlerts != 1 || overview.SimulationIncidents != 1 || overview.SimulationOpenCases != 0 {
+		t.Fatalf("overview did not distinguish live and simulation records: %#v", overview)
+	}
+
 	response = send(t, handler, http.MethodDelete, "/api/simulations/run-1", nil, "test-token")
 	if response.Code != http.StatusOK {
 		t.Fatalf("simulation reset status = %d, want 200", response.Code)
 	}
-	if data := db.Snapshot(); len(data.Events) != 0 || len(data.Alerts) != 0 || len(data.Incidents) != 0 {
-		t.Fatalf("simulation reset left data behind: %#v", data)
+	if data := db.Snapshot(); len(data.Events) != 1 || len(data.Alerts) != 1 || len(data.Incidents) != 1 || data.Events[0].ID != liveEvent.ID || data.Events[0].SimulationRunID != "" {
+		t.Fatalf("simulation reset removed live data or left simulation data: %#v", data)
 	}
 }
 

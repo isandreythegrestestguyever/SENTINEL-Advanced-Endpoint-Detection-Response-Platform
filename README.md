@@ -49,6 +49,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Authenticated local-only Sigma rule test workspace: parses a bounded YAML rule with sigma-go and evaluates one normalized event without persisting it or changing the ingest detector.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, a selectable process tree that links only observed parent IDs, process event details, network metadata view, detection catalog, and audit history.
+- Provenance-separated live and replay counts in the authenticated overview API. Live posture metrics and recent-detection panels exclude replay alerts/incidents; the Range lab retains separate simulation counts and records.
 - Seven deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export. Runs fail on either missed expected rules or unexpected alert rules; the benign baseline checks that ordinary activity stays clear.
 - Simulation-only JSON archive export that keeps browser and service replay evidence portable without mixing live event records into the archive.
 - A fictional topology view labeled as synthetic metadata, event-level ATT&CK ground truth versus detector mappings, and visible evidence links in the replay stream.

@@ -12,7 +12,7 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 | Browser to service | Script injection, framing | Escaped dynamic text, CSP, nosniff, frame denial | Basic local app; token lifecycle is limited |
 | Service to local file | Data disclosure or corruption | Mode 0600, temp-file rename, loopback binding | No encryption, backup rotation, corruption recovery, or multi-process locking |
 | Service to PostgreSQL | Unauthorized DB access or data loss | Parameterized queries, loopback-only Compose port, transaction boundaries, indexed relational schema, optional transactional retention | Local Compose credentials are shared development values; least-privilege roles, backups, TLS policy, and recovery are not configured |
-| Simulation and live workflow | Simulated activity presented as real | Per-run provenance; live overview excludes replay data | No live action endpoints exist; future actions need backend enforcement |
+| Simulation and live workflow | Simulated activity presented as real | Per-run provenance; API overview exposes separate live/replay counts; live posture metrics and recent-detection panel exclude replay records; reset is scoped by run ID | Other analyst lists can include both namespaces; operators must inspect provenance before export or case work |
 | Host telemetry collection | Unsafe/invasive collection | Read-only Windows Event Log subscriptions; bounded SQLite outbox; no response actions | Windows service privileges, channel ACLs, install/recovery and retention behavior need Windows 11 integration review |
 | Agent transport | Impersonation or interception | HTTPS-only for remote endpoints; system TLS trust; optional mTLS CA verification; URI SAN to host ID check on ingest | Certificate identities are provisioned out of band; bearer token is shared; no per-endpoint revocation |
 
@@ -23,7 +23,7 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 - [x] Event body and selected field lengths bounded.
 - [x] Common credential-named command-line arguments are redacted before agent spooling and backend persistence; Rust/Go tests cover representative forms.
 - [x] Browser output escaped; security headers and server timeouts set.
-- [x] Simulation provenance is persisted and separated from live overview counts.
+- [x] Simulation provenance is persisted, overview counts are separated by namespace, live posture metrics exclude replay alerts/cases, and run reset preserves live records (Go integration and browser tests).
 - [x] Optional HTTPS when both certificate paths are configured.
 - [x] TLS 1.3 server configuration; optional mTLS client-chain verification.
 - [x] With mTLS enabled, certificate URI SAN must match the event host ID on ingest.

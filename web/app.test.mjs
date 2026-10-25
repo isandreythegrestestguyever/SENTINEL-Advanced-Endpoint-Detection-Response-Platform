@@ -40,6 +40,7 @@ function startApp(storage, hash = '', fetchImpl = async () => { throw new Error(
     Headers
   });
   vm.runInContext(source, context);
+  context.__elements = elements;
   return context;
 }
 
@@ -58,6 +59,42 @@ test('dashboard treats empty collection responses as empty arrays', async () => 
   await vm.runInContext('refreshData()', context);
   const collections = JSON.parse(vm.runInContext('JSON.stringify([state.endpoints,state.events,state.alerts,state.incidents,state.rules,state.audit,state.scenarios])', context));
   assert.deepEqual(collections, [[],[],[],[],[],[],[]]);
+});
+
+test('live overview metrics exclude replay records while reporting them separately', async () => {
+  const context = startApp(new Map());
+  vm.runInContext(`
+    state.staticDemo = true;
+    state.demo = {scenarios:[],rules:[]};
+    state.overview = {monitored_endpoints:1,connected_sensors:0};
+    state.events = [{id:'LIVE-E1',host_id:'live-host'},{id:'SIM-E1',host_id:'lab-host',simulation_run_id:'SIM-1'}];
+    state.alerts = [
+      {id:'LIVE-A1',title:'Live finding',status:'open',created_at:'2026-01-01T00:00:00Z'},
+      {id:'SIM-A1',title:'Replay finding',status:'open',created_at:'2026-01-01T00:00:00Z',simulation_run_id:'SIM-1'}
+    ];
+    state.incidents = [
+      {id:'LIVE-I1',status:'open'},
+      {id:'SIM-I1',status:'open',simulation_run_id:'SIM-1'}
+    ];
+  `, context);
+  const summary = JSON.parse(await vm.runInContext(`demoAPI('api/overview').then(JSON.stringify)`, context));
+  assert.equal(summary.live_events, 1);
+  assert.equal(summary.simulation_events, 1);
+  assert.equal(summary.live_alerts, 1);
+  assert.equal(summary.simulation_alerts, 1);
+  assert.equal(summary.live_incidents, 1);
+  assert.equal(summary.simulation_incidents, 1);
+  assert.equal(summary.open_incidents, 1);
+  const overview = vm.runInContext('renderOverview()', context);
+  assert.match(overview, /1 LIVE/);
+  assert.match(overview, /Live finding/);
+  assert.doesNotMatch(overview, /Replay finding/);
+  vm.runInContext(`updateNavigationCounts(buildEndpoints(state.events),state.alerts,state.incidents)`, context);
+  assert.equal(context.__elements.get('#fleet-count').textContent, 1);
+  assert.equal(context.__elements.get('#alert-count').textContent, 1);
+  assert.equal(context.__elements.get('#incident-count').textContent, 1);
+  const detections = vm.runInContext('renderDetections()', context);
+  assert.match(detections, /SIM SIM-1/);
 });
 
 test('shared page links open the requested dashboard view', () => {
