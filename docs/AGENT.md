@@ -1,6 +1,6 @@
 # Windows agent
 
-The `agent/` Rust crate implements a Windows service that subscribes to the native Windows Event Log API (`EvtSubscribe`), converts selected events into Sentinel schema `1.0`, durably queues them in SQLite, then delivers them to `POST /api/ingest`. It performs read-only collection and has no response or remote command capability.
+The `agent/` Rust crate implements a Windows service that subscribes to the native Windows Event Log API (`EvtSubscribe`), converts selected events into Sentinel schema `1.0`, durably queues them in SQLite, then delivers them to `POST /api/ingest`. It sends an authenticated heartbeat immediately and every 30 seconds to `POST /api/heartbeat`, reporting its version, configured event channels, and implemented collection capabilities. Those source and capability values are agent-reported configuration, not independent proof that each Windows channel is readable. It performs read-only collection and has no response or remote command capability.
 
 ## Collected records
 
@@ -56,13 +56,13 @@ On first start, the subscription begins with future events. It persists Windows 
 - Network and server errors retry with bounded exponential backoff. Authentication and other client errors stop the service so a misconfigured agent does not silently spin.
 - When the SQLite payload limit is reached, the event-log callback applies backpressure until the uploader creates space. Windows log retention can still overwrite records during a long outage; this is not a no-loss guarantee.
 
-Configure the Go service with `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY`, and `SENTINEL_CLIENT_CA` to verify presented client certificates (mTLS). Dashboard users can still use bearer auth without a client certificate. `/api/ingest` requires a certificate, and the leaf certificate must contain this exact URI SAN for the configured agent host ID:
+Configure the Go service with `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY`, and `SENTINEL_CLIENT_CA` to verify presented client certificates (mTLS). Dashboard users can still use bearer auth without a client certificate. `/api/ingest` and `/api/heartbeat` require a certificate, and the leaf certificate must contain this exact URI SAN for the configured agent host ID:
 
 ```text
 spiffe://sentinel.local/endpoint/<url-path-escaped-host-id>
 ```
 
-For example, `SENTINEL_HOST_ID=workstation-17` requires `spiffe://sentinel.local/endpoint/workstation-17`. The server still requires the configured bearer token. Operators provision the CA and per-host certificate out of band; there is no automated enrollment, certificate rotation, or individual revocation. Treat both the private key and shared token as secrets, and keep the listener on a trusted network.
+For example, `SENTINEL_HOST_ID=workstation-17` requires `spiffe://sentinel.local/endpoint/workstation-17`. The server still requires the configured bearer token. Operators provision the CA and per-host certificate out of band; there is no automated enrollment, certificate rotation, or individual revocation. Treat both the private key and shared token as secrets, and keep the listener on a trusted network. The fleet marks a sensor connected for 90 seconds after its last accepted heartbeat; afterward its status is stale. This is a freshness indicator, not proof of collection completeness or enrollment lifecycle management.
 
 ## Normalization
 

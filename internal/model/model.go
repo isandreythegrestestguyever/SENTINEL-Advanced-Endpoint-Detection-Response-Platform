@@ -55,10 +55,24 @@ type Incident struct {
 }
 
 type Endpoint struct {
-	HostID    string    `json:"host_id"`
-	Hostname  string    `json:"hostname"`
-	OS        string    `json:"os"`
-	Status    string    `json:"status"`
-	LastSeen  time.Time `json:"last_seen"`
-	Simulated bool      `json:"simulated"`
+	HostID                 string    `json:"host_id"`
+	Hostname               string    `json:"hostname"`
+	OS                     string    `json:"os"`
+	AgentVersion           string    `json:"agent_version,omitempty"`
+	TelemetrySources       []string  `json:"telemetry_sources,omitempty"`
+	CollectionCapabilities []string  `json:"collection_capabilities,omitempty"`
+	Status                 string    `json:"status"`
+	LastSeen               time.Time `json:"last_seen"`
+	LastHeartbeat          time.Time `json:"last_heartbeat,omitempty"`
+	LastEventAt            time.Time `json:"last_event_at,omitempty"`
+	Simulated              bool      `json:"simulated"`
+}
+
+type AgentHeartbeat struct {
+	HostID                 string   `json:"host_id"`
+	Hostname               string   `json:"hostname"`
+	OS                     string   `json:"os"`
+	AgentVersion           string   `json:"agent_version"`
+	TelemetrySources       []string `json:"telemetry_sources"`
+	CollectionCapabilities []string `json:"collection_capabilities"`
 }

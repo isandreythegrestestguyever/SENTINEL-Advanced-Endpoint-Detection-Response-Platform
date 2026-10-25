@@ -41,6 +41,27 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 	if !containsEvent(data.Events, eventID) || !containsAlert(data.Alerts, alert.ID) || len(data.Incidents) == 0 {
 		t.Fatalf("PostgreSQL snapshot missing inserted records: events=%d alerts=%d incidents=%d", len(data.Events), len(data.Alerts), len(data.Incidents))
 	}
+	endpoint := model.Endpoint{HostID: "endpoint-" + suffix, Hostname: "ENDPOINT-" + suffix, OS: "Windows", AgentVersion: "0.1.0", TelemetrySources: []string{"Security"}, CollectionCapabilities: []string{"process"}, Status: "online", LastSeen: now, LastHeartbeat: now}
+	if err := db.UpsertEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.AgentVersion = "0.2.0"
+	endpoint.LastHeartbeat = now.Add(time.Second)
+	endpoint.LastSeen = endpoint.LastHeartbeat
+	if err := db.UpsertEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	data = db.Snapshot()
+	var persistedEndpoint *model.Endpoint
+	for index := range data.Endpoints {
+		if data.Endpoints[index].HostID == endpoint.HostID {
+			persistedEndpoint = &data.Endpoints[index]
+			break
+		}
+	}
+	if persistedEndpoint == nil || persistedEndpoint.AgentVersion != "0.2.0" || !persistedEndpoint.LastHeartbeat.Equal(endpoint.LastHeartbeat) {
+		t.Fatalf("PostgreSQL endpoint heartbeat upsert = %#v", persistedEndpoint)
+	}
 	status, note, assignee := "acknowledged", "triaged", "test-analyst"
 	updatedAlert, found, err := db.UpdateAlert(alert.ID, &status, &note, &assignee)
 	if err != nil || !found || updatedAlert.Status != status || updatedAlert.AnalystNotes != note || updatedAlert.Assignee != assignee {

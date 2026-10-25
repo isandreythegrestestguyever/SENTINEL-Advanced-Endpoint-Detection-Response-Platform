@@ -73,3 +73,34 @@ func TestStorePersistsAnalystUpdatesAndSimulationReset(t *testing.T) {
 		t.Fatalf("expected persisted audit actions, got %d entries", len(data.Audit))
 	}
 }
+
+func TestStoreUpsertsAndPersistsEndpointHeartbeats(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sentinel.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	endpoint := model.Endpoint{HostID: "endpoint-1", Hostname: "HOST-1", OS: "Windows", AgentVersion: "0.1.0", TelemetrySources: []string{"Security"}, CollectionCapabilities: []string{"process"}, Status: "online", LastSeen: now, LastHeartbeat: now}
+	if err := s.UpsertEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.AgentVersion = "0.2.0"
+	endpoint.LastSeen = now.Add(time.Second)
+	endpoint.LastHeartbeat = endpoint.LastSeen
+	if err := s.UpsertEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := reloaded.Snapshot()
+	if len(data.Endpoints) != 1 || data.Endpoints[0].AgentVersion != "0.2.0" || !data.Endpoints[0].LastHeartbeat.Equal(endpoint.LastHeartbeat) {
+		t.Fatalf("endpoint heartbeat was not updated and persisted: %#v", data.Endpoints)
+	}
+	if len(data.Audit) != 2 {
+		t.Fatalf("expected one audit record per heartbeat, got %d", len(data.Audit))
+	}
+}

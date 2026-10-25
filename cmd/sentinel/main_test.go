@@ -152,6 +152,65 @@ func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	}
 }
 
+func TestHeartbeatRegistersFleetAndExpiresSensorStatus(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token", Analyst: "agent-token"}))
+	heartbeat := model.AgentHeartbeat{
+		HostID: "agent-1", Hostname: "AGENT-1", OS: "Windows 11", AgentVersion: "0.1.0",
+		TelemetrySources:       []string{"Security", "Microsoft-Windows-Sysmon/Operational"},
+		CollectionCapabilities: []string{"process", "authentication", "network"},
+	}
+	body, err := json.Marshal(heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := send(t, handler, http.MethodPost, "/api/heartbeat", body, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated heartbeat status = %d, want 401", response.Code)
+	}
+	response := send(t, handler, http.MethodPost, "/api/heartbeat", body, "agent-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d: %s", response.Code, response.Body.String())
+	}
+	if len(db.Snapshot().Endpoints) != 1 || db.Snapshot().Endpoints[0].HostID != heartbeat.HostID {
+		t.Fatalf("heartbeat did not register endpoint: %#v", db.Snapshot().Endpoints)
+	}
+
+	response = send(t, handler, http.MethodGet, "/api/endpoints", nil, "admin-token")
+	var endpoints []model.Endpoint
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&endpoints) != nil {
+		t.Fatalf("endpoint inventory returned %d: %s", response.Code, response.Body.String())
+	}
+	if len(endpoints) != 1 || endpoints[0].Status != "online" || endpoints[0].AgentVersion != "0.1.0" || len(endpoints[0].TelemetrySources) != 2 {
+		t.Fatalf("unexpected online endpoint view: %#v", endpoints)
+	}
+	response = send(t, handler, http.MethodGet, "/api/overview", nil, "admin-token")
+	var overview struct {
+		ConnectedSensors int `json:"connected_sensors"`
+	}
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&overview) != nil || overview.ConnectedSensors != 1 {
+		t.Fatalf("overview did not count fresh sensor heartbeat: status=%d data=%#v", response.Code, overview)
+	}
+
+	stale := endpoints[0]
+	stale.LastHeartbeat = time.Now().UTC().Add(-2 * time.Minute)
+	stale.LastSeen = stale.LastHeartbeat
+	if err := db.UpsertEndpoint(stale); err != nil {
+		t.Fatal(err)
+	}
+	response = send(t, handler, http.MethodGet, "/api/endpoints", nil, "admin-token")
+	endpoints = nil
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&endpoints) != nil || len(endpoints) != 1 || endpoints[0].Status != "stale" {
+		t.Fatalf("expired heartbeat was not marked stale: status=%d endpoints=%#v", response.Code, endpoints)
+	}
+	response = send(t, handler, http.MethodGet, "/api/overview", nil, "admin-token")
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&overview) != nil || overview.ConnectedSensors != 0 {
+		t.Fatalf("stale heartbeat counted as connected: status=%d data=%#v", response.Code, overview)
+	}
+}
+
 func TestMtlSIngestBindsCertificateUriToEventHost(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
 	if err != nil {
@@ -191,6 +250,25 @@ func TestMtlSIngestBindsCertificateUriToEventHost(t *testing.T) {
 	response = sendWithPeerCertificate(t, handler, body, "test-token", nil)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("missing client certificate was accepted: status %d", response.Code)
+	}
+
+	heartbeat := model.AgentHeartbeat{HostID: "host-2", Hostname: "HOST-2", OS: "Windows", AgentVersion: "0.1.0", TelemetrySources: []string{"Security"}, CollectionCapabilities: []string{"windows_event_log"}}
+	body, err = json.Marshal(heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = sendWithPeerCertificatePath(t, handler, "/api/heartbeat", body, "test-token", certificate)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("certificate for host-1 registered host-2 heartbeat: status %d", response.Code)
+	}
+	heartbeat.HostID, heartbeat.Hostname = "host-1", "HOST-1"
+	body, err = json.Marshal(heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = sendWithPeerCertificatePath(t, handler, "/api/heartbeat", body, "test-token", certificate)
+	if response.Code != http.StatusOK {
+		t.Fatalf("certificate host identity was rejected for heartbeat: status %d", response.Code)
 	}
 }
 
@@ -377,8 +455,12 @@ func send(t *testing.T, handler http.Handler, method, path string, body []byte, 
 }
 
 func sendWithPeerCertificate(t *testing.T, handler http.Handler, body []byte, token string, certificate *x509.Certificate) *httptest.ResponseRecorder {
+	return sendWithPeerCertificatePath(t, handler, "/api/ingest", body, token, certificate)
+}
+
+func sendWithPeerCertificatePath(t *testing.T, handler http.Handler, path string, body []byte, token string, certificate *x509.Certificate) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/api/ingest", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	if certificate != nil {

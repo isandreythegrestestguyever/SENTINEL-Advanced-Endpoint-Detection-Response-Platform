@@ -238,6 +238,15 @@ fn parse_channels(value: &str) -> Result<Vec<Channel>, String> {
             name: name.trim().to_owned(),
             event_ids,
         });
+        if channels
+            .last()
+            .is_some_and(|channel| channel.name.len() > 128)
+        {
+            return Err("event channel names must be at most 128 bytes".into());
+        }
+        if channels.len() > 32 {
+            return Err("at most 32 event channels can be configured".into());
+        }
     }
     if channels.is_empty() {
         return Err("at least one event channel must be configured".into());
@@ -458,6 +467,27 @@ impl Agent {
         {
             let uploader = Uploader {
                 endpoint: format!("{}/api/ingest", self.config.endpoint.trim_end_matches('/')),
+                heartbeat_endpoint: format!(
+                    "{}/api/heartbeat",
+                    self.config.endpoint.trim_end_matches('/')
+                ),
+                heartbeat: AgentHeartbeat {
+                    host_id: self.config.host_id.clone(),
+                    hostname: self.config.hostname.clone(),
+                    os: "Windows".into(),
+                    agent_version: env!("CARGO_PKG_VERSION").into(),
+                    telemetry_sources: self
+                        .config
+                        .channels
+                        .iter()
+                        .map(|channel| channel.name.clone())
+                        .collect(),
+                    collection_capabilities: vec![
+                        "windows_event_log".into(),
+                        "sqlite_spool".into(),
+                        "https_telemetry".into(),
+                    ],
+                },
                 token: self.config.token.clone(),
                 client: self.client.clone(),
                 spool: self.spool.clone(),
@@ -486,6 +516,8 @@ impl Agent {
 #[cfg(windows)]
 struct Uploader {
     endpoint: String,
+    heartbeat_endpoint: String,
+    heartbeat: AgentHeartbeat,
     token: String,
     client: Client,
     spool: Arc<Mutex<Spool>>,
@@ -496,7 +528,42 @@ struct Uploader {
 impl Uploader {
     fn run(self) -> Result<(), String> {
         let mut retry = Duration::from_secs(1);
+        let mut next_heartbeat = std::time::Instant::now();
         while !self.stop.load(std::sync::atomic::Ordering::Acquire) {
+            if std::time::Instant::now() >= next_heartbeat {
+                match self
+                    .client
+                    .post(&self.heartbeat_endpoint)
+                    .bearer_auth(&self.token)
+                    .json(&self.heartbeat)
+                    .send()
+                {
+                    Ok(response) if response.status().is_success() => {
+                        log("info", "endpoint heartbeat accepted");
+                        next_heartbeat = std::time::Instant::now() + Duration::from_secs(30);
+                    }
+                    Ok(response)
+                        if response.status().is_server_error()
+                            || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
+                    {
+                        log(
+                            "warn",
+                            &format!("heartbeat deferred: HTTP {}", response.status()),
+                        );
+                        next_heartbeat = std::time::Instant::now() + Duration::from_secs(5);
+                    }
+                    Ok(response) => {
+                        return Err(format!(
+                            "heartbeat endpoint rejected the agent with HTTP {}",
+                            response.status()
+                        ));
+                    }
+                    Err(error) => {
+                        log("warn", &format!("heartbeat deferred: {error}"));
+                        next_heartbeat = std::time::Instant::now() + Duration::from_secs(5);
+                    }
+                }
+            }
             let batch = self
                 .spool
                 .lock()
@@ -563,6 +630,17 @@ impl Uploader {
         }
         Ok(())
     }
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Serialize)]
+struct AgentHeartbeat {
+    host_id: String,
+    hostname: String,
+    os: String,
+    agent_version: String,
+    telemetry_sources: Vec<String>,
+    collection_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -168,7 +169,14 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 				hosts[ev.HostID] = true
 			}
 		}
-		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": 0, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT · NO LIVE SENSORS"})
+		connected := 0
+		for _, endpoint := range d.Endpoints {
+			if isFreshHeartbeat(endpoint.LastHeartbeat, time.Now().UTC()) {
+				connected++
+				hosts[endpoint.HostID] = true
+			}
+		}
+		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": connected, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT"})
 	}))
 	mux.HandleFunc("/api/events", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
@@ -182,25 +190,43 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		if !ok {
 			return
 		}
+		now := time.Now().UTC()
+		for _, endpoint := range d.Endpoints {
+			if isFreshHeartbeat(endpoint.LastHeartbeat, now) {
+				endpoint.Status = "online"
+			} else {
+				endpoint.Status = "stale"
+			}
+			latest[endpoint.HostID] = endpoint
+		}
 		for _, event := range d.Events {
 			seenAt := event.IngestedAt
 			if seenAt.IsZero() {
 				seenAt = event.Time
 			}
-			endpoint := latest[event.HostID]
-			if endpoint.HostID == "" || seenAt.After(endpoint.LastSeen) {
+			endpoint, exists := latest[event.HostID]
+			if !exists {
 				endpoint = model.Endpoint{HostID: event.HostID, Hostname: event.Hostname, OS: "Unknown", Status: "observed", LastSeen: seenAt, Simulated: event.SimulationRunID != ""}
 				if endpoint.Simulated {
 					endpoint.OS = "Windows (simulated)"
 					endpoint.Status = "simulation"
 				}
-				latest[event.HostID] = endpoint
+			} else if endpoint.LastHeartbeat.IsZero() {
+				if seenAt.After(endpoint.LastSeen) {
+					endpoint.LastSeen = seenAt
+					endpoint.Hostname = event.Hostname
+				}
 			}
+			if seenAt.After(endpoint.LastEventAt) {
+				endpoint.LastEventAt = seenAt
+			}
+			latest[event.HostID] = endpoint
 		}
 		endpoints := make([]model.Endpoint, 0, len(latest))
 		for _, endpoint := range latest {
 			endpoints = append(endpoints, endpoint)
 		}
+		sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].HostID < endpoints[j].HostID })
 		jsonOut(w, endpoints)
 	}))
 	mux.HandleFunc("/api/alerts", read(func(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +330,42 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 	})
 	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, detection.Rules) })
 	mux.HandleFunc("/api/scenarios", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, simulator.All()) })
+	mux.HandleFunc("/api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		if accessRole(r, tokens) == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8192)
+		var heartbeat model.AgentHeartbeat
+		if err := json.NewDecoder(r.Body).Decode(&heartbeat); err != nil {
+			http.Error(w, "invalid heartbeat", http.StatusBadRequest)
+			return
+		}
+		if message := validHeartbeat(heartbeat); message != "" {
+			http.Error(w, message, http.StatusBadRequest)
+			return
+		}
+		if tokens.RequireClientCertHostBinding && !clientCertificateIdentifiesHost(r, heartbeat.HostID) {
+			http.Error(w, "client certificate is not enrolled for this host_id", http.StatusForbidden)
+			return
+		}
+		now := time.Now().UTC()
+		endpoint := model.Endpoint{
+			HostID: heartbeat.HostID, Hostname: heartbeat.Hostname, OS: heartbeat.OS,
+			AgentVersion: heartbeat.AgentVersion, TelemetrySources: heartbeat.TelemetrySources,
+			CollectionCapabilities: heartbeat.CollectionCapabilities, Status: "online",
+			LastSeen: now, LastHeartbeat: now,
+		}
+		if err := db.UpsertEndpoint(endpoint); err != nil {
+			http.Error(w, "could not persist heartbeat", http.StatusInternalServerError)
+			return
+		}
+		jsonOut(w, map[string]any{"accepted": true, "host_id": endpoint.HostID, "last_heartbeat": endpoint.LastHeartbeat})
+	})
 	mux.HandleFunc("/api/ingest", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "POST required", 405)
@@ -474,6 +536,29 @@ func valid(e model.Event) string {
 	}
 	return ""
 }
+
+func validHeartbeat(heartbeat model.AgentHeartbeat) string {
+	if heartbeat.HostID == "" || heartbeat.Hostname == "" || heartbeat.OS == "" || heartbeat.AgentVersion == "" {
+		return "host_id, hostname, os, and agent_version are required"
+	}
+	if len(heartbeat.HostID) > 128 || len(heartbeat.Hostname) > 255 || len(heartbeat.OS) > 80 || len(heartbeat.AgentVersion) > 64 {
+		return "heartbeat identity field length limit exceeded"
+	}
+	if len(heartbeat.TelemetrySources) == 0 || len(heartbeat.TelemetrySources) > 32 || len(heartbeat.CollectionCapabilities) > 32 {
+		return "heartbeat source or capability count is outside limits"
+	}
+	for _, value := range append(append([]string{}, heartbeat.TelemetrySources...), heartbeat.CollectionCapabilities...) {
+		if strings.TrimSpace(value) == "" || len(value) > 128 {
+			return "heartbeat source and capability values must contain 1 to 128 bytes"
+		}
+	}
+	return ""
+}
+
+func isFreshHeartbeat(lastHeartbeat, now time.Time) bool {
+	return !lastHeartbeat.IsZero() && !lastHeartbeat.After(now) && now.Sub(lastHeartbeat) <= 90*time.Second
+}
+
 func auth(r *http.Request, t string) bool {
 	return bearerMatches(r.Header.Get("Authorization"), t)
 }

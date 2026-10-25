@@ -8,7 +8,7 @@ SENTINEL is a local-first security engineering workbench. The Go service accepts
 
 The hosted Pages build is a **browser-only simulation**: fixtures and rule definitions are exported from the Go packages, then JavaScript applies those exported definitions to events in the browser. This is a browser implementation of the same documented rule conditions; it does not call the Go detector. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to send each replay event through the actual Go backend and server-side persistence.
 
-> **Not production EDR:** The Windows sensor has portable normalization/spool tests and a Windows CI cross-target build check, but has not been run on a Windows 11 endpoint here. There is no automated endpoint enrollment, certificate rotation or revocation, heartbeat, response action, user accounts or sessions, production deployment, retention policy, or external security review. When mTLS is enabled, ingest requires the client certificate URI SAN to match the event host ID; operators provision this identity out of band, and the shared bearer token remains required. Configured bearer tokens are a minimal single-process access split, not a full identity system. Do not expose the service to an untrusted network or submit sensitive telemetry.
+> **Not production EDR:** The Windows sensor has portable normalization/spool tests and a Windows CI cross-target build check, but has not been run on a Windows 11 endpoint here. It reports authenticated heartbeats and agent-declared sources/capabilities; no Windows runtime evidence is available. There is no automated endpoint enrollment, certificate rotation or revocation, response action, user accounts or sessions, production deployment, retention policy, or external security review. When mTLS is enabled, heartbeat and ingest require the client certificate URI SAN to match the host ID; operators provision this identity out of band, and the shared bearer token remains required. Configured bearer tokens are a minimal single-process access split, not a full identity system. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
 ## Run locally
 
@@ -51,7 +51,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 
 ## Event-to-alert path
 
-1. `POST /api/ingest` accepts a schema `1.0` event (maximum body 1 MiB).
+1. `POST /api/ingest` accepts a schema `1.0` event (maximum body 1 MiB). `POST /api/heartbeat` stores agent version, configured source/capability reports, and server receipt time; connected status expires after 90 seconds.
 2. The service validates required fields and bounds, rejects duplicate event IDs, evaluates enabled rules, and stores evidence for matches.
 3. Events, alerts, host/run incident groups, and logical audit records are saved transactionally in PostgreSQL, or in the local JSON file when that development mode is selected.
 4. The dashboard reads actual local API data and sends analyst changes back to authenticated routes.
@@ -79,7 +79,7 @@ Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node 
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, heartbeat health, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

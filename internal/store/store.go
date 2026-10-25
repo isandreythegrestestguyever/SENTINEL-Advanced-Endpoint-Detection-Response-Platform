@@ -20,6 +20,7 @@ type Repository interface {
 	UpdateIncident(id string, status, note *string) (model.Incident, bool, error)
 	RemoveSimulation(runID string) error
 	AddEvent(event model.Event, alerts []model.Alert) error
+	UpsertEndpoint(endpoint model.Endpoint) error
 	Ping(context.Context) error
 	Close()
 }
@@ -28,6 +29,7 @@ type Data struct {
 	Events    []model.Event    `json:"events"`
 	Alerts    []model.Alert    `json:"alerts"`
 	Incidents []model.Incident `json:"incidents"`
+	Endpoints []model.Endpoint `json:"endpoints,omitempty"`
 	Audit     []map[string]any `json:"audit"`
 }
 type Store struct {
@@ -172,6 +174,22 @@ func (s *Store) AddEvent(e model.Event, alerts []model.Alert) error {
 	s.Audit = append(s.Audit, map[string]any{"action": "event.ingested", "event_id": e.ID, "time": time.Now().UTC()})
 	return s.save()
 }
+
+func (s *Store) UpsertEndpoint(endpoint model.Endpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.Endpoints {
+		if s.Endpoints[index].HostID == endpoint.HostID {
+			s.Endpoints[index] = endpoint
+			s.Audit = append(s.Audit, map[string]any{"action": "endpoint.heartbeat", "host_id": endpoint.HostID, "time": endpoint.LastHeartbeat})
+			return s.save()
+		}
+	}
+	s.Endpoints = append(s.Endpoints, endpoint)
+	s.Audit = append(s.Audit, map[string]any{"action": "endpoint.heartbeat", "host_id": endpoint.HostID, "time": endpoint.LastHeartbeat})
+	return s.save()
+}
+
 func (s *Store) save() error {
 	b, e := json.MarshalIndent(s.Data, "", "  ")
 	if e != nil {

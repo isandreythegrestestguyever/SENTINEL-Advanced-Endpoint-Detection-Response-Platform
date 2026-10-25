@@ -140,6 +140,16 @@ func (s *PostgresStore) ReadSnapshot() (Data, error) {
 	}); err != nil {
 		return Data{}, err
 	}
+	if err := loadJSONRows(ctx, s.pool, `SELECT payload FROM endpoints ORDER BY host_id`, func(raw []byte) error {
+		var item model.Endpoint
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return err
+		}
+		data.Endpoints = append(data.Endpoints, item)
+		return nil
+	}); err != nil {
+		return Data{}, err
+	}
 	if err := loadJSONRows(ctx, s.pool, `SELECT payload FROM audit_log ORDER BY audit_id`, func(raw []byte) error {
 		var item map[string]any
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -232,6 +242,27 @@ func (s *PostgresStore) AddEvent(event model.Event, alerts []model.Alert) error 
 		}
 	}
 	if err := insertAudit(ctx, tx, map[string]any{"action": "event.ingested", "event_id": event.ID, "time": time.Now().UTC()}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) UpsertEndpoint(endpoint model.Endpoint) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	payload, err := json.Marshal(endpoint)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO endpoints(host_id,last_heartbeat,payload) VALUES($1,$2,$3) ON CONFLICT(host_id) DO UPDATE SET last_heartbeat=EXCLUDED.last_heartbeat,payload=EXCLUDED.payload`, endpoint.HostID, endpoint.LastHeartbeat, payload); err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, map[string]any{"action": "endpoint.heartbeat", "host_id": endpoint.HostID, "time": endpoint.LastHeartbeat}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
