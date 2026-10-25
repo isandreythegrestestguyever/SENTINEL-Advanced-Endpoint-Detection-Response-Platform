@@ -8,7 +8,7 @@ SENTINEL is a local-first security engineering workbench. The Go service accepts
 
 The hosted Pages build is a **browser-only simulation**: fixtures and rule definitions are exported from the Go packages, then JavaScript applies those exported definitions to events in the browser. This is a browser implementation of the same documented rule conditions; it does not call the Go detector. Run results, alerts, notes, and audit entries are saved in that browser's local storage, so they survive reloads in the same browser profile. They do not sync between devices or to GitHub, and clearing site data removes them. Run the local Go service to send each replay event through the actual Go backend and server-side persistence.
 
-> **Not production EDR:** The Windows sensor has portable normalization/spool tests and a Windows CI cross-target build check, but has not been run on a Windows 11 endpoint here. There is no endpoint enrollment, certificate-to-host binding or revocation, heartbeat, response action, user accounts or sessions, production deployment, retention policy, or external security review. Optional mTLS verifies a client certificate chain but does not enroll or identify a unique endpoint. Configured bearer tokens are a minimal single-process access split, not a full identity system. Do not expose the service to an untrusted network or submit sensitive telemetry.
+> **Not production EDR:** The Windows sensor has portable normalization/spool tests and a Windows CI cross-target build check, but has not been run on a Windows 11 endpoint here. There is no automated endpoint enrollment, certificate rotation or revocation, heartbeat, response action, user accounts or sessions, production deployment, retention policy, or external security review. When mTLS is enabled, ingest requires the client certificate URI SAN to match the event host ID; operators provision this identity out of band, and the shared bearer token remains required. Configured bearer tokens are a minimal single-process access split, not a full identity system. Do not expose the service to an untrusted network or submit sensitive telemetry.
 
 ## Run locally
 
@@ -31,7 +31,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 | `SENTINEL_ADMIN_TOKEN` | Random per start | Administrator bearer token; required for simulation reset |
 | `SENTINEL_ANALYST_TOKEN` | unset | Optional distinct analyst bearer token; can read data and submit events or analyst updates |
 | `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY` | unset | Serve HTTPS when both paths are set |
-| `SENTINEL_CLIENT_CA` | unset | Require a client certificate from this CA; must be used with HTTPS |
+| `SENTINEL_CLIENT_CA` | unset | Verify presented client certificates; require a host-bound certificate on ingest; requires HTTPS |
 
 ## What works
 
@@ -79,7 +79,7 @@ Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node 
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, authenticated endpoint enrollment with certificate-to-host binding and revocation, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, heartbeat health, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

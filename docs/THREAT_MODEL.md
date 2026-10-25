@@ -2,7 +2,7 @@
 
 ## Scope and assets
 
-This release processes synthetic or manually submitted endpoint metadata in one local service and includes a Windows Event Log agent source that has not yet been runtime-tested on Windows 11. It has no endpoint enrollment, certificate-to-host binding, user accounts, or production network deployment. Assets are event/alert/incident/audit records, bearer tokens, client certificate keys, local SQLite spool, database credentials when PostgreSQL is enabled, and event provenance.
+This release processes synthetic or manually submitted endpoint metadata in one local service and includes a Windows Event Log agent source that has not yet been runtime-tested on Windows 11. It has no automated endpoint enrollment, certificate revocation, user accounts, or production network deployment. With mTLS enabled, event ingestion checks that the verified client certificate URI SAN names the submitted host ID. Assets are event/alert/incident/audit records, bearer tokens, client certificate keys, local SQLite spool, database credentials when PostgreSQL is enabled, and event provenance.
 
 | Boundary | Threat | Current control | Remaining risk |
 |---|---|---|---|
@@ -13,7 +13,7 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 | Service to PostgreSQL | Unauthorized DB access or data loss | Parameterized queries, loopback-only Compose port, transaction boundaries, indexed relational schema | Local Compose credentials are shared development values; least-privilege roles, backups, TLS policy, retention, and recovery are not configured |
 | Simulation and live workflow | Simulated activity presented as real | Per-run provenance; live overview excludes replay data | No live action endpoints exist; future actions need backend enforcement |
 | Host telemetry collection | Unsafe/invasive collection | Read-only Windows Event Log subscriptions; bounded SQLite outbox; no response actions | Windows service privileges, channel ACLs, install/recovery and retention behavior need Windows 11 integration review |
-| Agent transport | Impersonation or interception | HTTPS-only for remote endpoints; system TLS trust; optional mTLS CA verification | Certificate is not bound to host ID; bearer token is shared; no per-endpoint revocation |
+| Agent transport | Impersonation or interception | HTTPS-only for remote endpoints; system TLS trust; optional mTLS CA verification; URI SAN to host ID check on ingest | Certificate identities are provisioned out of band; bearer token is shared; no per-endpoint revocation |
 
 ## Checklist
 
@@ -24,7 +24,8 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 - [x] Simulation provenance is persisted and separated from live overview counts.
 - [x] Optional HTTPS when both certificate paths are configured.
 - [x] TLS 1.3 server configuration; optional mTLS client-chain verification.
-- [ ] mTLS enrollment, certificate-to-host binding, and endpoint identity rotation/revocation.
+- [x] With mTLS enabled, certificate URI SAN must match the event host ID on ingest.
+- [ ] Automated endpoint enrollment, certificate rotation, and endpoint identity revocation.
 - [ ] User accounts, RBAC, session lifecycle, CSRF strategy for cookie auth.
 - [ ] Rate limits, replay-resistant ingestion, comprehensive schema validation, audit tamper evidence.
 - [ ] Production database least privilege, retention, encrypted storage, backup and recovery.

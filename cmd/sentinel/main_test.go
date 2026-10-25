@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -151,6 +152,48 @@ func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	}
 }
 
+func TestMtlSIngestBindsCertificateUriToEventHost(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := url.Parse("spiffe://sentinel.local/endpoint/host-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "test-token", RequireClientCertHostBinding: true}))
+	certificate := &x509.Certificate{URIs: []*url.URL{identity}}
+
+	otherHost := model.Event{ID: "other-host-event", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "host-2", Hostname: "HOST-2", Source: "test", Type: "process_start"}
+	body, err := json.Marshal(otherHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := sendWithPeerCertificate(t, handler, body, "test-token", certificate)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("certificate for host-1 ingested host-2 event: status %d", response.Code)
+	}
+	if got := len(db.Snapshot().Events); got != 0 {
+		t.Fatalf("mismatched certificate wrote %d events", got)
+	}
+
+	otherHost.ID = "matching-host-event"
+	otherHost.HostID = "host-1"
+	otherHost.Hostname = "HOST-1"
+	body, err = json.Marshal(otherHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = sendWithPeerCertificate(t, handler, body, "test-token", certificate)
+	if response.Code != http.StatusOK {
+		t.Fatalf("certificate host identity was rejected: status %d", response.Code)
+	}
+	response = sendWithPeerCertificate(t, handler, body, "test-token", nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing client certificate was accepted: status %d", response.Code)
+	}
+}
+
 func TestTLSConfigurationCanRequireVerifiedClientCertificates(t *testing.T) {
 	t.Setenv("SENTINEL_TLS_CERT", "")
 	t.Setenv("SENTINEL_TLS_KEY", "")
@@ -180,7 +223,7 @@ func TestTLSConfigurationCanRequireVerifiedClientCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.MinVersion != tls.VersionTLS13 || config.ClientAuth != tls.RequireAndVerifyClientCert || config.ClientCAs == nil {
+	if config.MinVersion != tls.VersionTLS13 || config.ClientAuth != tls.VerifyClientCertIfGiven || config.ClientCAs == nil {
 		t.Fatalf("mTLS configuration is incomplete: %#v", config)
 	}
 	if _, err := tlsConfigFromEnv(); err != nil {
@@ -327,6 +370,19 @@ func send(t *testing.T, handler http.Handler, method, path string, body []byte, 
 	request.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func sendWithPeerCertificate(t *testing.T, handler http.Handler, body []byte, token string, certificate *x509.Certificate) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/ingest", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	if certificate != nil {
+		request.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificate}}
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

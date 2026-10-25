@@ -16,6 +16,7 @@ import (
 	"github.com/isandreythegrestestguyever/SENTINEL-Advanced-Endpoint-Detection-Response-Platform/internal/store"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -58,11 +59,14 @@ func main() {
 	if analystToken == "" {
 		log.Printf("SENTINEL_ANALYST_TOKEN is unset; the administrator token can access analyst routes")
 	}
-	mux := routes(db, AccessTokens{Admin: token, Analyst: analystToken})
 	tlsConfig, err := tlsConfigFromEnv()
 	if err != nil {
 		log.Fatal(err)
 	}
+	mux := routes(db, AccessTokens{
+		Admin: token, Analyst: analystToken,
+		RequireClientCertHostBinding: tlsConfig.ClientCAs != nil,
+	})
 	addr := env("SENTINEL_ADDR", "127.0.0.1:8080")
 	server := &http.Server{Addr: addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: tlsConfig}
 	serveErrors := make(chan error, 1)
@@ -117,13 +121,16 @@ func tlsConfigFromEnv() (*tls.Config, error) {
 		return nil, errors.New("SENTINEL_CLIENT_CA did not contain a usable PEM certificate")
 	}
 	config.ClientCAs = clientCAs
-	config.ClientAuth = tls.RequireAndVerifyClientCert
+	// Browser analysts may use bearer auth without a client cert. If a cert is
+	// presented, TLS verifies it; the ingest handler then requires its host URI.
+	config.ClientAuth = tls.VerifyClientCertIfGiven
 	return config, nil
 }
 
 type AccessTokens struct {
-	Admin   string
-	Analyst string
+	Admin                        string
+	Analyst                      string
+	RequireClientCertHostBinding bool
 }
 
 func routes(db store.Repository, tokens AccessTokens) http.Handler {
@@ -316,6 +323,10 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 			http.Error(w, er, 400)
 			return
 		}
+		if tokens.RequireClientCertHostBinding && !clientCertificateIdentifiesHost(r, e.HostID) {
+			http.Error(w, "client certificate is not enrolled for this host_id", http.StatusForbidden)
+			return
+		}
 		process(w, db, e)
 	})
 	mux.HandleFunc("/api/simulate", func(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +487,20 @@ func accessRole(r *http.Request, tokens AccessTokens) string {
 		return "analyst"
 	}
 	return ""
+}
+
+func clientCertificateIdentifiesHost(r *http.Request, hostID string) bool {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return false
+	}
+	for _, identity := range r.TLS.PeerCertificates[0].URIs {
+		if identity.Scheme == "spiffe" && identity.Host == "sentinel.local" && identity.User == nil &&
+			identity.EscapedPath() == "/endpoint/"+url.PathEscape(hostID) &&
+			identity.RawQuery == "" && identity.Fragment == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func bearerMatches(header, token string) bool {

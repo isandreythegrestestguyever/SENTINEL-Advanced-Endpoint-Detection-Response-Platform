@@ -56,7 +56,13 @@ On first start, the subscription begins with future events. It persists Windows 
 - Network and server errors retry with bounded exponential backoff. Authentication and other client errors stop the service so a misconfigured agent does not silently spin.
 - When the SQLite payload limit is reached, the event-log callback applies backpressure until the uploader creates space. Windows log retention can still overwrite records during a long outage; this is not a no-loss guarantee.
 
-Configure the Go service with `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY`, and `SENTINEL_CLIENT_CA` to require and verify client certificates (mTLS). Provision a distinct client certificate per endpoint and a restricted analyst token for ingestion. The current server authenticates the certificate chain and bearer role separately; it does not enroll endpoint identities, bind certificate subject to `host_id`, rotate certificates, or revoke individual endpoints.
+Configure the Go service with `SENTINEL_TLS_CERT`, `SENTINEL_TLS_KEY`, and `SENTINEL_CLIENT_CA` to verify presented client certificates (mTLS). Dashboard users can still use bearer auth without a client certificate. `/api/ingest` requires a certificate, and the leaf certificate must contain this exact URI SAN for the configured agent host ID:
+
+```text
+spiffe://sentinel.local/endpoint/<url-path-escaped-host-id>
+```
+
+For example, `SENTINEL_HOST_ID=workstation-17` requires `spiffe://sentinel.local/endpoint/workstation-17`. The server still requires the configured bearer token. Operators provision the CA and per-host certificate out of band; there is no automated enrollment, certificate rotation, or individual revocation. Treat both the private key and shared token as secrets, and keep the listener on a trusted network.
 
 ## Normalization
 
