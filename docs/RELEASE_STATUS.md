@@ -14,7 +14,7 @@
 
 ## Requires Windows validation
 
-The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. The `x86_64-pc-windows-msvc` cross-target compile, including the heartbeat sender, passed in GitHub Actions on commit `b55e2ad`; this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat cross-compilation as runtime proof.
+The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. The `x86_64-pc-windows-msvc` cross-target compile, including the heartbeat sender, passed in GitHub Actions on commit `e8c302e`; this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat cross-compilation as runtime proof.
 
 ## Not implemented
 
