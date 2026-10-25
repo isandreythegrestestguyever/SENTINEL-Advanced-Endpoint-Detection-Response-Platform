@@ -75,7 +75,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - `cmd/export-demo`: exports scenario and rule definitions for Pages.
 - `internal/model`: versioned Sentinel event, alert, incident, and endpoint types.
 - `internal/detection`: native single-field rule matching.
-- `internal/simulator`: seven deterministic synthetic scenario fixtures.
+- `internal/simulator`: seven deterministic synthetic scenario fixtures; S01 now exercises the bundled Sigma rule through both local ingestion and browser replay.
 - `internal/store`: PostgreSQL persistence and migrations, plus a mutex-protected JSON development store.
 - `web`: static dashboard and browser-only Pages preview.
 - `docs`: architecture, detection, simulator, testing, and threat-model notes.

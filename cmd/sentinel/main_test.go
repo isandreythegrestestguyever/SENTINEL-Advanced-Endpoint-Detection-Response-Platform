@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -701,15 +702,19 @@ func TestSimulationEndpointPreservesFixtureTimeAndScopesReport(t *testing.T) {
 		t.Fatalf("simulation status = %d: %s", response.Code, response.Body.String())
 	}
 	var report struct {
-		Success    bool `json:"success"`
-		AlertCount int  `json:"alert_count"`
-		EventCount int  `json:"event_count"`
+		Success    bool     `json:"success"`
+		AlertCount int      `json:"alert_count"`
+		EventCount int      `json:"event_count"`
+		Detected   []string `json:"detected"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&report); err != nil {
 		t.Fatal(err)
 	}
-	if !report.Success || report.AlertCount != 2 || report.EventCount != 2 {
+	if !report.Success || report.AlertCount != 3 || report.EventCount != 2 {
 		t.Fatalf("simulation report does not describe this run: %#v", report)
+	}
+	if !slices.Contains(report.Detected, "SEN-SIGMA-PUBLIC-001") {
+		t.Fatalf("S01 simulation did not validate the bundled Sigma detection: %#v", report.Detected)
 	}
 
 	fixtures := simulator.All()[0].Events

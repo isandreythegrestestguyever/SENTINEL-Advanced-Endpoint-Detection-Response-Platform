@@ -11,12 +11,23 @@ import (
 )
 
 func TestEveryScenarioExpectedRulesMatch(t *testing.T) {
+	sigmaEngine, err := DefaultSigmaEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, scenario := range simulator.All() {
 		t.Run(scenario.ID, func(t *testing.T) {
 			got := map[string]bool{}
 			var previous []model.Event
 			for _, event := range scenario.Events {
 				for _, finding := range Evaluate(event, previous) {
+					got[finding.Rule.ID] = true
+				}
+				sigmaFindings, err := sigmaEngine.Evaluate(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, finding := range sigmaFindings {
 					got[finding.Rule.ID] = true
 				}
 				previous = append(previous, event)

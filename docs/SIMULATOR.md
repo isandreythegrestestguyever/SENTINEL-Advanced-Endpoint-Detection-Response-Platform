@@ -16,7 +16,7 @@ The current dataset has a fixed time seed and no random number generation. Repla
 
 | ID | Exercise | Expected rules |
 |---|---|---|
-| S01 | Suspicious process chain | `SEN-EXEC-001`, `SEN-PROC-002` |
+| S01 | Suspicious process chain | `SEN-EXEC-001`, `SEN-PROC-002`, `SEN-SIGMA-PUBLIC-001` |
 | S02 | Credential access investigation | `SEN-AUTH-003` |
 | S03 | Ransomware activity investigation | `SEN-FILE-004` |
 | S04 | Persistence investigation | `SEN-PERSIST-005` |

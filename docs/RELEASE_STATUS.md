@@ -17,7 +17,7 @@
 - Reproducible Go detection microbenchmarks cover single-event and threshold-correlation evaluation. A five-run local baseline is recorded in `benchmarks/README.md`; it is not an end-to-end ingestion or capacity benchmark.
 - Sentinel Range exports a simulation-only JSON archive of replay records, linked audit entries, scenarios, and saved reports; the local service export follows all event pages before assembling it.
 - Authenticated local `/api/rules/test` parses a bounded Sigma YAML document with sigma-go v0.6.5 and reports selection/condition results against one normalized event without writing to the database. Rulebook UI shows this workspace in local-service mode and explains that it is unavailable on GitHub Pages.
-- The service also loads one versioned bundled Windows `process_creation` Sigma rule at startup and evaluates it during authenticated event ingestion. The integration test verifies the generated evidence-linked alert, rule revision, API catalog entry, and logsource boundary. GitHub Pages exports the same rule metadata for local browser simulation; it does not run sigma-go or provide the Go detector.
+- The service also loads one versioned bundled Windows `process_creation` Sigma rule at startup and evaluates it during authenticated event ingestion. Tests verify its evidence-linked alert, rule revision, API catalog entry, logsource boundary, and S01 replay result. GitHub Pages exports the same rule metadata for browser replay; it does not run sigma-go or provide the Go detector.
 
 ## Requires Windows validation
 
