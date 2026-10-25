@@ -27,8 +27,8 @@ test('analyst runs S01, inspects Sigma evidence, and exports the fixture report'
   await expect(page.getByText('SCENARIO PASSED')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('DETECTED SEN-SIGMA-PUBLIC-001')).toBeVisible();
   await expect(page.getByText('100%', { exact: true })).toHaveCount(2);
-  await mkdir('screenshots', { recursive: true });
-  await page.screenshot({ path: 'screenshots/sentinel-range.png', fullPage: true, animations: 'disabled' });
+  await mkdir('test-results', { recursive: true });
+  await page.screenshot({ path: 'test-results/sentinel-range.png', fullPage: true, animations: 'disabled' });
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
