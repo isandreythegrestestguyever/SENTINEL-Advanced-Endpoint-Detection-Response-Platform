@@ -13,7 +13,7 @@ By default the service subscribes to these channels and event IDs:
 
 Security process-creation event 4688 depends on the Windows audit policy being enabled. Command-line values depend on the corresponding policy. Sysmon is optional; its channel must exist and be readable by the service identity. Registry telemetry is labeled `startup_change` only when the target path matches a known startup location. Ordinary registry changes remain generic.
 
-These are event-log records, not complete host visibility. The agent does not inspect packets, read file contents, collect credentials, or claim to detect every process, file, registry, or authentication action. Sysmon collection is metadata-only. Windows Security channel permissions vary by policy; grant only the required channel access to the service identity.
+These are event-log records, not complete host visibility. The agent does not inspect packets, read file contents, or claim to detect every process, file, registry, or authentication action. It redacts common credential-named command-line arguments before placing events in its local spool; this narrow filter does not recognize every secret format. Sysmon collection is metadata-only. Windows Security channel permissions vary by policy; grant only the required channel access to the service identity.
 
 ## Build and install
 

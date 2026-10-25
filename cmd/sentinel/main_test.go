@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	event := model.Event{
 		ID: "evt-1", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "lab-1",
 		Hostname: "LAB-1", Source: "test", Type: "process_start", Category: "endpoint",
-		CommandLine: "powershell.exe -EncodedCommand SAMPLE", SimulationRunID: "run-1",
+		CommandLine: "powershell.exe -EncodedCommand SAMPLE --token=sample-only-secret", SimulationRunID: "run-1",
 	}
 	body, err := json.Marshal(event)
 	if err != nil {
@@ -59,6 +60,10 @@ func TestIngestAndAnalystWorkflow(t *testing.T) {
 	}
 	if !accepted.Accepted || len(accepted.Alerts) != 1 || accepted.Alerts[0].RuleID != "SEN-EXEC-001" {
 		t.Fatalf("unexpected ingest result: %#v", accepted)
+	}
+	stored := db.Snapshot()
+	if len(stored.Events) != 1 || stored.Events[0].CommandLine == "" || strings.Contains(stored.Events[0].CommandLine, "sample-only-secret") || !strings.Contains(stored.Events[0].CommandLine, "[REDACTED]") {
+		t.Fatalf("ingested command line was not safely redacted before storage: %#v", stored.Events)
 	}
 
 	response = send(t, handler, http.MethodPost, "/api/ingest", body, "test-token")

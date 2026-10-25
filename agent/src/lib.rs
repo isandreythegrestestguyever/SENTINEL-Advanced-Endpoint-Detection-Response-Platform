@@ -856,7 +856,7 @@ pub fn normalize_windows_event(
         .or_else(|| data.remove("NewProcessName"));
     let command_line = data
         .remove("CommandLine")
-        .map(|value| truncate_utf8(&value, 4096));
+        .map(|value| truncate_utf8(&redact_sensitive_command_line(&value), 4096));
     let process_id = data
         .remove("ProcessId")
         .or_else(|| data.remove("NewProcessId"))
@@ -906,7 +906,13 @@ pub fn normalize_windows_event(
         fields.insert("sha256".into(), hash);
     }
     for (key, value) in data.into_iter().take(32) {
-        fields.insert(format!("source_{key}"), value.chars().take(1024).collect());
+        let field_name = format!("source_{key}");
+        let field_value = if sensitive_key(&field_name) {
+            "[REDACTED]".to_owned()
+        } else {
+            value.chars().take(1024).collect()
+        };
+        fields.insert(field_name, field_value);
     }
     let identity = format!(
         "{host_id}\0{}\0{}\0{}\0{}",
@@ -935,6 +941,87 @@ pub fn normalize_windows_event(
         technique: technique.map(str::to_owned),
         fields,
     })
+}
+
+fn redact_sensitive_command_line(value: &str) -> String {
+    let mut spans = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    let mut previous = '\0';
+    for (index, character) in value.char_indices() {
+        if start.is_none() && !character.is_whitespace() {
+            start = Some(index);
+        }
+        if character == '"' && previous != '\\' {
+            quoted = !quoted;
+        }
+        if character.is_whitespace() && !quoted {
+            if let Some(token_start) = start.take() {
+                spans.push((token_start, index));
+            }
+        }
+        previous = character;
+    }
+    if let Some(token_start) = start {
+        spans.push((token_start, value.len()));
+    }
+
+    let mut output = String::with_capacity(value.len());
+    let mut position = 0;
+    let mut redact_next = false;
+    for (token_start, token_end) in spans {
+        output.push_str(&value[position..token_start]);
+        let token = &value[token_start..token_end];
+        if redact_next {
+            output.push_str("[REDACTED]");
+            redact_next = false;
+        } else {
+            if let Some(delimiter) = token.find(['=', ':']) {
+                if sensitive_key(&token[..delimiter]) {
+                    output.push_str(&token[..=delimiter]);
+                    let suffix = (token.starts_with('"') && token.ends_with('"'))
+                        || (token.starts_with('\'') && token.ends_with('\''));
+                    output.push_str("[REDACTED]");
+                    if suffix {
+                        output.push(token.chars().last().unwrap_or('"'));
+                    }
+                } else {
+                    output.push_str(token);
+                }
+            } else {
+                let argument = token
+                    .trim_matches(['"', '\''])
+                    .trim_start_matches(['-', '/', '\\']);
+                output.push_str(token);
+                redact_next = sensitive_key(argument);
+            }
+        }
+        position = token_end;
+    }
+    output.push_str(&value[position..]);
+    output
+}
+
+fn sensitive_key(value: &str) -> bool {
+    let key = value
+        .trim_matches(['"', '\''])
+        .trim_start_matches(['-', '/', '\\'])
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    [
+        "password",
+        "passwd",
+        "pwd",
+        "token",
+        "secret",
+        "api-key",
+        "apikey",
+        "credential",
+        "authorization",
+    ]
+    .iter()
+    .any(|name| key == *name || key.ends_with(&format!("-{name}")))
+        || key == "apikey"
 }
 
 fn parse_id(value: &str) -> Option<u32> {
@@ -1021,7 +1108,7 @@ mod tests {
 
     #[test]
     fn event_xml_normalizes_only_supported_windows_events() {
-        let xml = r#"<Event><System><Provider Name="Microsoft-Windows-Sysmon"/><EventID>1</EventID><TimeCreated SystemTime="2026-10-25T10:00:00.1234567Z"/><EventRecordID>42</EventRecordID><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HOST-1</Computer><Execution ProcessID="123"/><Security UserID="S-1-5-18"/></System><EventData><Data Name="ProcessId">0x2A</Data><Data Name="ParentProcessId">12</Data><Data Name="Image">C:\Windows\test.exe</Data><Data Name="CommandLine">test.exe &amp; safe</Data><Data Name="Hashes">SHA256=abc123</Data></EventData></Event>"#;
+        let xml = r#"<Event><System><Provider Name="Microsoft-Windows-Sysmon"/><EventID>1</EventID><TimeCreated SystemTime="2026-10-25T10:00:00.1234567Z"/><EventRecordID>42</EventRecordID><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>HOST-1</Computer><Execution ProcessID="123"/><Security UserID="S-1-5-18"/></System><EventData><Data Name="ProcessId">0x2A</Data><Data Name="ParentProcessId">12</Data><Data Name="Image">C:\Windows\test.exe</Data><Data Name="CommandLine">test.exe &amp; safe</Data><Data Name="Hashes">SHA256=abc123</Data><Data Name="ApiKey">fixture-secret</Data></EventData></Event>"#;
         let raw = parse_windows_event(xml).unwrap();
         assert_eq!(raw.record_id, 42);
         let normalized = normalize_windows_event(&raw, "host-id", "HOST-1").unwrap();
@@ -1032,6 +1119,10 @@ mod tests {
         assert_eq!(
             normalized.fields.get("sha256").map(String::as_str),
             Some("abc123")
+        );
+        assert_eq!(
+            normalized.fields.get("source_ApiKey").map(String::as_str),
+            Some("[REDACTED]")
         );
         assert!(
             normalize_windows_event(
@@ -1073,6 +1164,19 @@ mod tests {
             .insert("CommandLine".into(), format!("{}é", "a".repeat(4095)));
         let normalized = normalize_windows_event(&raw, "host-id", "HOST-1").unwrap();
         assert_eq!(normalized.command_line.as_deref().unwrap().len(), 4095);
+    }
+
+    #[test]
+    fn command_line_secrets_are_redacted_before_spooling() {
+        let command = r#"tool.exe --profile "approved deployment" --password="very secret value" --access_token abc123 --api-key:xyz"#;
+        let redacted = redact_sensitive_command_line(command);
+        assert_eq!(
+            redacted,
+            r#"tool.exe --profile "approved deployment" --password=[REDACTED] --access_token [REDACTED] --api-key:[REDACTED]"#
+        );
+        for secret in ["very secret value", "abc123", "xyz"] {
+            assert!(!redacted.contains(secret));
+        }
     }
 
     #[test]

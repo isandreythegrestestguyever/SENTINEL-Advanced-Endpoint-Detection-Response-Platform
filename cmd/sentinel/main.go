@@ -624,6 +624,7 @@ func readData(w http.ResponseWriter, db store.Repository) (store.Data, bool) {
 }
 
 func processEvent(db store.Repository, e model.Event) ([]model.Alert, error) {
+	model.RedactSensitive(&e)
 	e.IngestedAt = time.Now().UTC()
 	previous, err := db.RecentEvents(e, 10*time.Minute, 500)
 	if err != nil {

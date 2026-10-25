@@ -7,6 +7,7 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 | Boundary | Threat | Current control | Remaining risk |
 |---|---|---|---|
 | Client to service | Oversized or malformed event | 1 MiB request cap, JSON decoding, required-field and length checks | No broad schema fuzzing yet |
+| Telemetry content | Credentials accidentally present in command lines or custom fields | Agent redacts common credential-named arguments before spooling; Go service redacts those arguments and credential-named custom fields before detection/storage; covered by Rust and Go unit/integration tests | Narrow key-based filter only; unknown encodings, arbitrary free text, and unrecognized secret names can pass through |
 | Write route | Unauthorized submissions or request floods | Bearer-token role split, per-client-IP token buckets for telemetry and write routes, payload caps | Shared tokens; in-process limits do not coordinate across replicas or distinguish clients behind the same NAT |
 | Browser to service | Script injection, framing | Escaped dynamic text, CSP, nosniff, frame denial | Basic local app; token lifecycle is limited |
 | Service to local file | Data disclosure or corruption | Mode 0600, temp-file rename, loopback binding | No encryption, backup rotation, corruption recovery, or multi-process locking |
@@ -20,6 +21,7 @@ This release processes synthetic or manually submitted endpoint metadata in one 
 - [x] Loopback-only default bind.
 - [x] Random bearer token if none configured; write APIs require it.
 - [x] Event body and selected field lengths bounded.
+- [x] Common credential-named command-line arguments are redacted before agent spooling and backend persistence; Rust/Go tests cover representative forms.
 - [x] Browser output escaped; security headers and server timeouts set.
 - [x] Simulation provenance is persisted and separated from live overview counts.
 - [x] Optional HTTPS when both certificate paths are configured.

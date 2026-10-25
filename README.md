@@ -40,6 +40,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Six enabled, documented single-field detection rules with evidence links, severity, confidence metadata, ATT&CK identifiers, revisions, and false-positive notes.
 - Bounded count correlations for repeated authentication failures, file modifications, and same-destination network activity; correlated alerts include every supporting event ID.
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
+- Common command-line credential arguments and credential-named custom fields are redacted by the Windows agent before spooling and by the service before detection/storage; this narrow filter is not general-purpose DLP.
 - Bounded per-IP rate limits on telemetry and write routes, with `Retry-After` responses and a capped in-process bucket map.
 - Optional service-side retention for expired telemetry, dependent alerts/cases, audit entries, and stale heartbeat records; disabled unless configured.
 - Authenticated event history with stable cursor pagination, capped page sizes, and older-event controls in process and network investigations.
@@ -52,7 +53,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Simulation-only JSON archive export that keeps browser and service replay evidence portable without mixing live event records into the archive.
 - A fictional topology view labeled as synthetic metadata, event-level ATT&CK ground truth versus detector mappings, and visible evidence links in the replay stream.
 - Browser-only Pages replay state is saved per browser profile; local API mode persists through PostgreSQL or the local JSON development store.
-- Read-only Windows Event Log service source with bounded SQLite outbox, persistent channel bookmarks, stable event IDs, HTTPS client identity support, and structured rotating JSONL logs.
+- Read-only Windows Event Log service source with bounded SQLite outbox, persistent channel bookmarks, stable event IDs, HTTPS client identity support, common credential-argument redaction before spooling, and structured rotating JSONL logs.
 - Reproducible detection-package microbenchmarks with environment and observed baseline recorded separately from end-to-end capacity claims.
 - Responsive dashboard with explicit live-submission versus simulated-data labeling.
 
