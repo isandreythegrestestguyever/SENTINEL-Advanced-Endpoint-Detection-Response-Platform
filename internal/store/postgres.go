@@ -181,6 +181,51 @@ func loadJSONRows(ctx context.Context, pool *pgxpool.Pool, query string, appendR
 	return rows.Err()
 }
 
+func (s *PostgresStore) ReadEventsPage(limit int, cursor string) ([]model.Event, string, error) {
+	if limit < 1 || limit > MaxEventPageSize {
+		return nil, "", ErrInvalidEventPageSize
+	}
+	before, err := decodeEventCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var rows pgx.Rows
+	if cursor == "" {
+		rows, err = s.pool.Query(ctx, `SELECT payload,ingested_at FROM events ORDER BY ingested_at DESC,event_id DESC LIMIT $1`, limit+1)
+	} else {
+		rows, err = s.pool.Query(ctx, `SELECT payload,ingested_at FROM events WHERE (ingested_at,event_id)<($1,$2) ORDER BY ingested_at DESC,event_id DESC LIMIT $3`, before.IngestedAt, before.EventID, limit+1)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	events := make([]model.Event, 0, limit+1)
+	for rows.Next() {
+		var payload []byte
+		var ingestedAt time.Time
+		var event model.Event
+		if err := rows.Scan(&payload, &ingestedAt); err != nil {
+			return nil, "", err
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return nil, "", err
+		}
+		event.IngestedAt = ingestedAt
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	var next string
+	if len(events) > limit {
+		events = events[:limit]
+		next = encodeEventCursor(events[len(events)-1])
+	}
+	return events, next, nil
+}
+
 func (s *PostgresStore) RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

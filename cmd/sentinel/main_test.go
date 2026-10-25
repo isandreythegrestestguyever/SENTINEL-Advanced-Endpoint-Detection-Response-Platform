@@ -213,6 +213,43 @@ func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	}
 }
 
+func TestEventsAPIUsesBoundedCursorPages(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, id := range []string{"page-a", "page-b", "page-c"} {
+		event := model.Event{ID: id, SchemaVersion: "1.0", Time: now, IngestedAt: now, HostID: "page-host", Hostname: "PAGE-HOST", Source: "test", Type: "page_test"}
+		if err := db.AddEvent(event, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token"}))
+	if response := send(t, handler, http.MethodGet, "/api/events?limit=1", nil, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated page status = %d, want 401", response.Code)
+	}
+	response := send(t, handler, http.MethodGet, "/api/events?limit=1", nil, "admin-token")
+	var page struct {
+		Items      []model.Event `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&page) != nil || len(page.Items) != 1 || page.Items[0].ID != "page-c" || page.NextCursor == "" {
+		t.Fatalf("first API page = %#v, status=%d", page, response.Code)
+	}
+	path := "/api/events?limit=1&cursor=" + url.QueryEscape(page.NextCursor)
+	response = send(t, handler, http.MethodGet, path, nil, "admin-token")
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&page) != nil || len(page.Items) != 1 || page.Items[0].ID != "page-b" {
+		t.Fatalf("second API page = %#v, status=%d", page, response.Code)
+	}
+	if response := send(t, handler, http.MethodGet, "/api/events?limit=501", nil, "admin-token"); response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized page limit status = %d, want 400", response.Code)
+	}
+	if response := send(t, handler, http.MethodGet, "/api/events?cursor=not-a-cursor", nil, "admin-token"); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status = %d, want 400", response.Code)
+	}
+}
+
 func TestHeartbeatRegistersFleetAndExpiresSensorStatus(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
 	if err != nil {

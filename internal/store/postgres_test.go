@@ -63,6 +63,7 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 		t.Fatalf("PostgreSQL endpoint heartbeat upsert = %#v", persistedEndpoint)
 	}
 	retentionRun := "retention-run-" + suffix
+	pageRun := "page-run-" + suffix
 	retentionCutoff := now.Add(-24 * time.Hour)
 	oldEvent := model.Event{ID: "retention-old-event-" + suffix, SchemaVersion: "1.0", Time: now.Add(-48 * time.Hour), IngestedAt: now.Add(-48 * time.Hour), HostID: "retention-host", Hostname: "RETENTION-HOST", Source: "integration-test", Type: "process_start", SimulationRunID: retentionRun}
 	oldAlert := model.Alert{ID: "retention-old-alert-" + suffix, RuleID: "RETENTION", Title: "Expired event alert", Severity: "low", Confidence: 50, HostID: oldEvent.HostID, Hostname: oldEvent.Hostname, EventIDs: []string{oldEvent.ID}, CreatedAt: now, SimulationRunID: retentionRun, Status: "open"}
@@ -90,6 +91,20 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 		if entry["action"] == "expired.test" {
 			t.Fatal("PostgreSQL retention left expired audit data")
 		}
+	}
+	for index := 0; index < 3; index++ {
+		pageEvent := model.Event{ID: fmt.Sprintf("page-event-%s-%d", suffix, index), SchemaVersion: "1.0", Time: now, IngestedAt: now.Add(time.Duration(index) * time.Second), HostID: "page-host", Hostname: "PAGE-HOST", Source: "integration-test", Type: "page_test", SimulationRunID: pageRun}
+		if err := db.AddEvent(pageEvent, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstPage, cursor, err := db.ReadEventsPage(2, "")
+	if err != nil || len(firstPage) != 2 || firstPage[0].ID != fmt.Sprintf("page-event-%s-2", suffix) || firstPage[1].ID != fmt.Sprintf("page-event-%s-1", suffix) || cursor == "" {
+		t.Fatalf("PostgreSQL first event page = %#v, cursor=%q, err=%v", firstPage, cursor, err)
+	}
+	secondPage, nextCursor, err := db.ReadEventsPage(2, cursor)
+	if err != nil || len(secondPage) == 0 || secondPage[0].ID != fmt.Sprintf("page-event-%s-0", suffix) {
+		t.Fatalf("PostgreSQL second event page = %#v, cursor=%q, err=%v", secondPage, nextCursor, err)
 	}
 	status, note, assignee := "acknowledged", "triaged", "test-analyst"
 	updatedAlert, found, err := db.UpdateAlert(alert.ID, &status, &note, &assignee)
@@ -137,6 +152,9 @@ func TestPostgresRepositoryIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.RemoveSimulation(retentionRun); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RemoveSimulation(pageRun); err != nil {
 		t.Fatal(err)
 	}
 	after := db.Snapshot()

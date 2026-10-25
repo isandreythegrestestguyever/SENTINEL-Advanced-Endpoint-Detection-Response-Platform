@@ -42,6 +42,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Authenticated ingestion with request and field bounds, duplicate event ID rejection, JSON persistence, automatic alert grouping, and analyst audit entries.
 - Bounded per-IP rate limits on telemetry and write routes, with `Retry-After` responses and a capped in-process bucket map.
 - Optional service-side retention for expired telemetry, dependent alerts/cases, audit entries, and stale heartbeat records; disabled unless configured.
+- Authenticated event history with stable cursor pagination, capped page sizes, and older-event controls in process and network investigations.
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
@@ -82,7 +83,7 @@ Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node 
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, pagination and retention, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
 
 ## License
 

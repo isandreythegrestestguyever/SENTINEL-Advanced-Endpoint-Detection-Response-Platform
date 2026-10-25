@@ -74,6 +74,17 @@ test('static replay records and report survive reload in the same browser store'
   assert.equal(restored.runHistory[0].run_id, 'SIM-0');
 });
 
+test('static event history keeps every browser replay record when paged API is requested', async () => {
+  const context = startApp(new Map());
+  const events = Array.from({length: 700}, (_, index) => ({id:`SIM-1-E${index + 1}`, simulation_run_id:'SIM-1'}));
+  vm.runInContext(`state.staticDemo = true; state.events = ${JSON.stringify(events)}`, context);
+  const page = await vm.runInContext(`demoAPI('api/events?limit=500')`, context);
+  assert.equal(page.items.length, 700);
+  assert.equal(page.items[0].id, 'SIM-1-E1');
+  assert.equal(page.items[699].id, 'SIM-1-E700');
+  assert.equal(page.next_cursor, '');
+});
+
 test('browser replay evaluator meets every Go-exported scenario assertion', () => {
   const exported = execFileSync('go', ['run', './cmd/export-demo'], {
     cwd: repositoryRoot,

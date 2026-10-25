@@ -160,3 +160,34 @@ func TestStorePrunesExpiredEvidenceAndKeepsRecentRuns(t *testing.T) {
 		t.Fatalf("retention action was not audit logged: %#v", data.Audit)
 	}
 }
+
+func TestStoreReadEventsPageUsesStableDescendingCursor(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "pages.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"evt-a", "evt-b", "evt-c", "evt-d", "evt-e"} {
+		if err := s.AddEvent(model.Event{ID: id, HostID: "host", Hostname: "HOST", Time: at, IngestedAt: at}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, cursor, err := s.ReadEventsPage(2, "")
+	if err != nil || len(first) != 2 || first[0].ID != "evt-e" || first[1].ID != "evt-d" || cursor == "" {
+		t.Fatalf("first page = %#v, cursor=%q, err=%v", first, cursor, err)
+	}
+	second, next, err := s.ReadEventsPage(2, cursor)
+	if err != nil || len(second) != 2 || second[0].ID != "evt-c" || second[1].ID != "evt-b" || next == "" {
+		t.Fatalf("second page = %#v, cursor=%q, err=%v", second, next, err)
+	}
+	third, next, err := s.ReadEventsPage(2, next)
+	if err != nil || len(third) != 1 || third[0].ID != "evt-a" || next != "" {
+		t.Fatalf("third page = %#v, cursor=%q, err=%v", third, next, err)
+	}
+	if _, _, err := s.ReadEventsPage(2, "invalid cursor"); !errors.Is(err, ErrInvalidEventCursor) {
+		t.Fatalf("invalid cursor error = %v", err)
+	}
+	if _, _, err := s.ReadEventsPage(MaxEventPageSize+1, ""); !errors.Is(err, ErrInvalidEventPageSize) {
+		t.Fatalf("invalid page size error = %v", err)
+	}
+}

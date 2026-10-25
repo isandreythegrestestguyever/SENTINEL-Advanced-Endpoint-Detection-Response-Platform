@@ -223,10 +223,25 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		jsonOut(w, map[string]any{"monitored_endpoints": len(hosts), "connected_sensors": connected, "open_incidents": countLive(d.Incidents), "alerts_by_severity": by, "events": len(d.Events), "alerts": len(d.Alerts), "mode": "LOCAL DEVELOPMENT"})
 	}))
 	mux.HandleFunc("/api/events", read(func(w http.ResponseWriter, r *http.Request) {
-		d, ok := readData(w, db)
-		if ok {
-			jsonOut(w, d.Events)
+		limit := 100
+		if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+			parsed, err := strconv.Atoi(rawLimit)
+			if err != nil || parsed < 1 || parsed > store.MaxEventPageSize {
+				http.Error(w, "limit must be between 1 and 500", http.StatusBadRequest)
+				return
+			}
+			limit = parsed
 		}
+		items, nextCursor, err := db.ReadEventsPage(limit, r.URL.Query().Get("cursor"))
+		if err != nil {
+			if errors.Is(err, store.ErrInvalidEventCursor) || errors.Is(err, store.ErrInvalidEventPageSize) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, "could not read event page", http.StatusInternalServerError)
+			return
+		}
+		jsonOut(w, map[string]any{"items": items, "next_cursor": nextCursor})
 	}))
 	mux.HandleFunc("/api/endpoints", read(func(w http.ResponseWriter, r *http.Request) {
 		latest := map[string]model.Endpoint{}

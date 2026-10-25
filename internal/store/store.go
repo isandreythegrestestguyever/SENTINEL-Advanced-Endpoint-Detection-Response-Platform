@@ -12,9 +12,11 @@ import (
 )
 
 var ErrDuplicateEvent = errors.New("event ID already exists")
+var ErrInvalidEventPageSize = errors.New("event page limit must be between 1 and 500")
 
 type Repository interface {
 	ReadSnapshot() (Data, error)
+	ReadEventsPage(limit int, cursor string) ([]model.Event, string, error)
 	RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error)
 	UpdateAlert(id string, status, note, assignee *string) (model.Alert, bool, error)
 	UpdateIncident(id string, status, note *string) (model.Incident, bool, error)
@@ -62,6 +64,52 @@ func (s *Store) Snapshot() Data              { s.mu.RLock(); defer s.mu.RUnlock(
 func (s *Store) ReadSnapshot() (Data, error) { return s.Snapshot(), nil }
 func (s *Store) Ping(context.Context) error  { return nil }
 func (s *Store) Close()                      {}
+
+func (s *Store) ReadEventsPage(limit int, cursor string) ([]model.Event, string, error) {
+	if limit < 1 || limit > MaxEventPageSize {
+		return nil, "", ErrInvalidEventPageSize
+	}
+	before, err := decodeEventCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	s.mu.RLock()
+	events := append([]model.Event(nil), s.Events...)
+	s.mu.RUnlock()
+	sort.Slice(events, func(i, j int) bool {
+		left, right := eventPageTime(events[i]), eventPageTime(events[j])
+		if left.Equal(right) {
+			return events[i].ID > events[j].ID
+		}
+		return left.After(right)
+	})
+	page := make([]model.Event, 0, limit+1)
+	for _, event := range events {
+		if cursor != "" {
+			at := eventPageTime(event)
+			if at.After(before.IngestedAt) || (at.Equal(before.IngestedAt) && event.ID >= before.EventID) {
+				continue
+			}
+		}
+		page = append(page, event)
+		if len(page) > limit {
+			break
+		}
+	}
+	var next string
+	if len(page) > limit {
+		page = page[:limit]
+		next = encodeEventCursor(page[len(page)-1])
+	}
+	return page, next, nil
+}
+
+func eventPageTime(event model.Event) time.Time {
+	if !event.IngestedAt.IsZero() {
+		return event.IngestedAt
+	}
+	return event.Time
+}
 
 func (s *Store) RecentEvents(event model.Event, window time.Duration, limit int) ([]model.Event, error) {
 	s.mu.RLock()
