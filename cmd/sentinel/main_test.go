@@ -117,6 +117,50 @@ func TestAuthRequiresBearerScheme(t *testing.T) {
 	}
 }
 
+func TestSigmaRuleTestRouteRequiresAuthAndDoesNotPersist(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token", Analyst: "analyst-token"}))
+	request := struct {
+		Rule  string      `json:"rule"`
+		Event model.Event `json:"event"`
+	}{
+		Rule: `title: Encoded PowerShell
+id: 7ad5e09c-34f5-4e22-8c22-355a4fb27810
+logsource:
+  product: windows
+detection:
+  selection:
+    CommandLine|contains: encodedcommand
+  condition: selection
+level: high
+`,
+		Event: model.Event{ID: "sigma-test-event", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "sigma-host", Hostname: "SIGMA-HOST", Source: "test", Type: "process_start", CommandLine: "powershell.exe -EncodedCommand SAMPLE"},
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := send(t, handler, http.MethodPost, "/api/rules/test", body, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated Sigma test status = %d, want 401", response.Code)
+	}
+	response := send(t, handler, http.MethodPost, "/api/rules/test", body, "analyst-token")
+	if response.Code != http.StatusOK {
+		t.Fatalf("Sigma test status = %d: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Matched bool `json:"matched"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil || !result.Matched {
+		t.Fatalf("Sigma test result = %#v, err=%v", result, err)
+	}
+	if data := db.Snapshot(); len(data.Events) != 0 || len(data.Alerts) != 0 || len(data.Audit) != 0 {
+		t.Fatalf("read-only Sigma test modified stored data: %#v", data)
+	}
+}
+
 func TestScenarioEvaluationFailsMissedAndUnexpectedRules(t *testing.T) {
 	passed := evaluateScenario([]string{"SEN-A", "SEN-B"}, []string{"SEN-A", "SEN-B", "SEN-B"})
 	if !passed.Success || len(passed.Detected) != 2 || len(passed.Missed) != 0 || len(passed.Unexpected) != 0 {
@@ -227,6 +271,37 @@ func TestAnalystCanReadButCannotResetSimulation(t *testing.T) {
 	response = send(t, handler, http.MethodDelete, "/api/simulations/run-1", nil, "admin-token")
 	if response.Code != http.StatusOK {
 		t.Fatalf("administrator simulation reset status = %d, want 200", response.Code)
+	}
+}
+
+func TestEmptyReadCollectionsReturnJSONArrays(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "sentinel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := headers(routes(db, AccessTokens{Admin: "admin-token"}))
+	for _, path := range []string{"/api/alerts", "/api/incidents", "/api/audit"} {
+		response := send(t, handler, http.MethodGet, path, nil, "admin-token")
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, response.Code)
+		}
+		var items []json.RawMessage
+		if err := json.NewDecoder(response.Body).Decode(&items); err != nil {
+			t.Fatalf("GET %s did not return a JSON array: %v", path, err)
+		}
+		if items == nil || len(items) != 0 {
+			t.Fatalf("GET %s = %s, want []", path, response.Body.String())
+		}
+	}
+	response := send(t, handler, http.MethodGet, "/api/events", nil, "admin-token")
+	var page struct {
+		Items []model.Event `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Items == nil {
+		t.Fatal("GET /api/events returned null items, want []")
 	}
 }
 

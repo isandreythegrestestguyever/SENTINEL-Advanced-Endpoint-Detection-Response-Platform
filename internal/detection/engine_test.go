@@ -35,6 +35,52 @@ func TestEveryScenarioExpectedRulesMatch(t *testing.T) {
 	}
 }
 
+func TestSigmaSingleEventTestUsesNormalizedFieldMappings(t *testing.T) {
+	rule := `title: Encoded PowerShell
+id: 7ad5e09c-34f5-4e22-8c22-355a4fb27810
+description: Detect an encoded command line
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    CommandLine|contains: encodedcommand
+  condition: selection
+level: high
+`
+	event := model.Event{ID: "sigma-1", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "sigma-host", Hostname: "SIGMA-HOST", Source: "test", Type: "process_start", CommandLine: "powershell.exe -EncodedCommand SAMPLE"}
+	result, err := TestSigmaRule(rule, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Matched || result.RuleID != "7ad5e09c-34f5-4e22-8c22-355a4fb27810" || !result.SearchResults["selection"] {
+		t.Fatalf("Sigma rule did not match normalized command_line: %#v", result)
+	}
+	event.CommandLine = "powershell.exe -NoProfile"
+	result, err = TestSigmaRule(rule, event)
+	if err != nil || result.Matched {
+		t.Fatalf("Sigma rule unexpectedly matched unrelated event: result=%#v err=%v", result, err)
+	}
+}
+
+func TestSigmaTestRejectsUnsupportedProductAndOversizedRule(t *testing.T) {
+	event := model.Event{ID: "sigma-2", SchemaVersion: "1.0", Time: time.Now().UTC(), HostID: "sigma-host", Hostname: "SIGMA-HOST", Source: "test", Type: "process_start"}
+	rule := `title: Other Platform
+detection:
+  selection:
+    CommandLine: test
+  condition: selection
+logsource:
+  product: linux
+`
+	if _, err := TestSigmaRule(rule, event); err == nil {
+		t.Fatal("unsupported logsource product was accepted")
+	}
+	if _, err := TestSigmaRule(string(make([]byte, MaxSigmaRuleBytes+1)), event); err == nil {
+		t.Fatal("oversized Sigma input was accepted")
+	}
+}
+
 func TestAuthenticationCorrelationThresholdAndProvenance(t *testing.T) {
 	base := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
 	var previous []model.Event

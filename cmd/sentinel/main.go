@@ -241,6 +241,9 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 			http.Error(w, "could not read event page", http.StatusInternalServerError)
 			return
 		}
+		if items == nil {
+			items = []model.Event{}
+		}
 		jsonOut(w, map[string]any{"items": items, "next_cursor": nextCursor})
 	}))
 	mux.HandleFunc("/api/endpoints", read(func(w http.ResponseWriter, r *http.Request) {
@@ -291,19 +294,31 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 	mux.HandleFunc("/api/alerts", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
-			jsonOut(w, d.Alerts)
+			items := d.Alerts
+			if items == nil {
+				items = []model.Alert{}
+			}
+			jsonOut(w, items)
 		}
 	}))
 	mux.HandleFunc("/api/incidents", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
-			jsonOut(w, d.Incidents)
+			items := d.Incidents
+			if items == nil {
+				items = []model.Incident{}
+			}
+			jsonOut(w, items)
 		}
 	}))
 	mux.HandleFunc("/api/audit", read(func(w http.ResponseWriter, r *http.Request) {
 		d, ok := readData(w, db)
 		if ok {
-			jsonOut(w, d.Audit)
+			items := d.Audit
+			if items == nil {
+				items = []map[string]any{}
+			}
+			jsonOut(w, items)
 		}
 	}))
 	mux.HandleFunc("PATCH /api/alerts/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +403,31 @@ func routes(db store.Repository, tokens AccessTokens) http.Handler {
 		jsonOut(w, map[string]any{"reset": true, "run_id": runID})
 	})
 	mux.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, detection.Rules) })
+	mux.HandleFunc("POST /api/rules/test", func(w http.ResponseWriter, r *http.Request) {
+		if accessRole(r, tokens) == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var request struct {
+			Rule  string      `json:"rule"`
+			Event model.Event `json:"event"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid Sigma test request", http.StatusBadRequest)
+			return
+		}
+		if message := valid(request.Event); message != "" {
+			http.Error(w, "invalid test event: "+message, http.StatusBadRequest)
+			return
+		}
+		result, err := detection.TestSigmaRule(request.Rule, request.Event)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jsonOut(w, result)
+	})
 	mux.HandleFunc("/api/scenarios", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, simulator.All()) })
 	mux.HandleFunc("/api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

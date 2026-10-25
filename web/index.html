@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0f10">
   <title>SENTINEL | Endpoint Detection & Response</title>
-  <link rel="stylesheet" href="style.css?v=1.3">
+  <link rel="stylesheet" href="style.css?v=1.4">
 </head>
 <body>
   <aside class="sidebar">
@@ -24,7 +24,7 @@
       <button class="nav-item" data-view="audit"><span class="nav-glyph">◷</span>Security audit</button>
       <button class="nav-item" data-view="range"><span class="nav-glyph">▸</span>Sentinel Range <span class="nav-pulse"></span></button>
     </nav>
-    <div class="sidebar-bottom"><div class="operator-chip"><span class="operator-avatar">A</span><span>LOCAL ANALYST<small id="operator-mode">DEMO MODE</small></span><button id="tokenBtn" title="Set analyst token" aria-label="Set analyst token">•••</button></div><div class="build-note">SENTINEL / RELEASE CANDIDATE<br>READ-ONLY SENSOR DESIGN</div></div>
+    <div class="sidebar-bottom"><div class="operator-chip"><span class="operator-avatar">A</span><span>LOCAL ANALYST<small id="operator-mode">DEMO MODE</small></span><button id="tokenBtn" title="Set analyst token" aria-label="Set analyst token" aria-expanded="false" aria-controls="token-entry">•••</button></div><div id="token-entry" class="token-entry" hidden><label class="form-label" for="analyst-token">LOCAL ANALYST TOKEN</label><input id="analyst-token" class="field" type="password" autocomplete="off" placeholder="Paste token"><div class="page-actions"><button id="save-token" class="button primary">VERIFY & SAVE</button><button id="cancel-token" class="button subtle">CANCEL</button></div><small id="token-error" role="status"></small></div><div class="build-note">SENTINEL / RELEASE CANDIDATE<br>READ-ONLY SENSOR DESIGN</div></div>
   </aside>
 
   <main class="workspace">
@@ -34,6 +34,6 @@
     <footer class="footer"><span>SENTINEL / EVIDENCE OVER APPEARANCE</span><span><span id="storage-label">LOCAL SERVICE STORAGE</span> <b>·</b> SIMULATION LABELING ENFORCED</span></footer>
   </main>
   <div class="toast" id="toast" role="status"></div>
-  <script src="app.js?v=1.5"></script>
+  <script src="app.js?v=1.6"></script>
 </body>
 </html>

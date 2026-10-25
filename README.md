@@ -45,6 +45,7 @@ Open <http://127.0.0.1:8080> and choose **Set analyst token** to paste the token
 - Authenticated event history with stable cursor pagination, capped page sizes, and older-event controls in process and network investigations.
 - PostgreSQL persistence with versioned migrations, indexed event/alert/incident tables, alert-to-event links, transactional event and alert writes, and run-scoped cleanup. JSON remains available for lightweight local demos.
 - Analyst alert actions: filter/search, inspect evidence, acknowledge/close, assign, and save notes.
+- Authenticated local-only Sigma rule test workspace: parses a bounded YAML rule with sigma-go and evaluates one normalized event without persisting it or changing the ingest detector.
 - Incident queue, status and notes updates, evidence timeline, and JSON incident export.
 - Endpoint inventory derived from received events, a selectable process tree that links only observed parent IDs, process event details, network metadata view, detection catalog, and audit history.
 - Seven deterministic, safe replay scenarios, with one-event-at-a-time playback, pause/resume, speed control, timeline scrubbing, results compared with declared ground truth, saved run history, and evidence-linked JSON/Markdown report export. Runs fail on either missed expected rules or unexpected alert rules; the benign baseline checks that ordinary activity stays clear.
@@ -85,7 +86,7 @@ Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node 
 
 ## Roadmap
 
-Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant. Sigma parsing and YARA scanning are not implemented.
+Next engineering priorities are Windows 11 service integration tests, automated endpoint enrollment and certificate rotation/revocation, user accounts and sessions, broader browser end-to-end tests, and a general-purpose correlation language. Sigma is parsed only in the local one-event test workspace; rules are not persisted or applied to ingestion, the v0.6.5 library documents itself as draft-spec, and multi-event aggregation is not set up. YARA scanning is not implemented. The dashboard currently serves the local API directly and is not a Next.js application. The event model is OCSF-inspired, not OCSF-compliant.
 
 ## License
 

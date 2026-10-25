@@ -10,12 +10,13 @@ import vm from 'node:vm';
 const source = await readFile(new URL('./app.js', import.meta.url), 'utf8');
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
-function startApp(storage, hash = '') {
+function startApp(storage, hash = '', fetchImpl = async () => { throw new Error('No API in static preview'); }) {
   const elements = new Map();
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       textContent: '', innerHTML: '', hidden: false, value: '',
-      classList: { add() {}, remove() {}, toggle() {} }
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {}, setAttribute() {}, focus() {}
     });
     return elements.get(selector);
   };
@@ -35,17 +36,56 @@ function startApp(storage, hash = '') {
     setInterval() { return 1; },
     setTimeout() { return 1; },
     clearTimeout() {},
-    fetch: async () => { throw new Error('No API in static preview'); }
+    fetch: fetchImpl,
+    Headers
   });
   vm.runInContext(source, context);
   return context;
 }
+
+test('dashboard treats empty collection responses as empty arrays', async () => {
+  const responses = {
+    'api/overview': {connected_sensors:0,monitored_endpoints:0},
+    'api/endpoints': null,
+    'api/events?limit=500': {items:null,next_cursor:''},
+    'api/alerts': null,
+    'api/incidents': null,
+    'api/rules': null,
+    'api/audit': null,
+    'api/scenarios': null
+  };
+  const context = startApp(new Map(), '#overview', async (path) => ({ok:true,status:200,json:async()=>responses[path]}));
+  await vm.runInContext('refreshData()', context);
+  const collections = JSON.parse(vm.runInContext('JSON.stringify([state.endpoints,state.events,state.alerts,state.incidents,state.rules,state.audit,state.scenarios])', context));
+  assert.deepEqual(collections, [[],[],[],[],[],[],[]]);
+});
 
 test('shared page links open the requested dashboard view', () => {
   const context = startApp(new Map(), '#range');
   assert.equal(vm.runInContext('state.view', context), 'range');
   const unknown = startApp(new Map(), '#not-a-view');
   assert.equal(vm.runInContext('state.view', unknown), 'overview');
+});
+
+test('rulebook exposes a local Sigma test workspace and labels its Pages boundary', () => {
+  const context = startApp(new Map());
+  vm.runInContext('state.staticDemo=false; state.rules=[]', context);
+  const local = vm.runInContext('renderRules()', context);
+  assert.match(local, /Sigma rule workspace/);
+  assert.match(local, /data-action="test-sigma"/);
+  assert.match(local, /CommandLine\|contains/);
+  assert.match(local, /does not add the rule to live ingestion/);
+  vm.runInContext('state.staticDemo=true', context);
+  const hosted = vm.runInContext('renderRules()', context);
+  assert.match(hosted, /LOCAL SERVICE REQUIRED/);
+  assert.doesNotMatch(hosted, /data-action="test-sigma"/);
+});
+
+test('local token entry validates against the service without a blocked browser prompt', () => {
+  assert.doesNotMatch(source, /\bprompt\s*\(/);
+  assert.match(source, /data-action="test-sigma"/);
+  assert.match(source, /api\('api\/overview'/);
+  assert.match(source, /aria-expanded/);
 });
 
 test('static replay records and report survive reload in the same browser store', () => {
