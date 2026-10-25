@@ -75,7 +75,7 @@ See [architecture](docs/ARCHITECTURE.md), [detection engine](docs/DETECTION_ENGI
 
 ## Verification
 
-Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, `cargo fmt --manifest-path agent/Cargo.toml -- --check`, and `cargo test --locked --manifest-path agent/Cargo.toml`. CI checks the Windows agent target and PostgreSQL-backed paths after the updated workflow runs. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
+Local checks: `go test ./...`, `go vet ./...`, `go build ./cmd/sentinel`, `node --check web/app.js`, `node --test web/app.test.mjs`, `cargo fmt --manifest-path agent/Cargo.toml -- --check`, and `cargo test --locked --manifest-path agent/Cargo.toml`. GitHub Actions passed the PostgreSQL-backed tests and Windows MSVC cross-target compile on the current source release. These checks do not establish Windows service runtime support, production security, multi-user operation, or live endpoint monitoring. See the testing guide for the exact verification boundary.
 
 ## Roadmap
 

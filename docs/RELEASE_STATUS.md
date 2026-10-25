@@ -4,14 +4,14 @@
 
 - Go service event ingestion, bounded rule evaluation, evidence-linked alerts, incident grouping, analyst updates, local JSON persistence, and run-scoped simulation cleanup.
 - Six deterministic synthetic scenarios through the Go HTTP ingestion/detection path. Go tests cover every declared expected rule; a local service smoke run exercised S06 and returned all three required alerts.
-- PostgreSQL migration and repository integration tests are configured to run against PostgreSQL in GitHub Actions. The updated workflow result is pending; local PostgreSQL runtime testing was unavailable because Docker was not running.
+- PostgreSQL migration and repository integration tests passed against PostgreSQL 17 in GitHub Actions. Local PostgreSQL runtime testing was unavailable because Docker was not running.
 - Static GitHub Pages preview with six exported scenarios, browser-side rule evaluation, replay playback controls, timeline scrubbing, labeled ground truth/detected techniques, downloadable reports, and browser-profile persistence.
 - Rust event XML parsing, normalization, bounded event validation, SQLite WAL spool, duplicate suppression, payload cap, bookmarks, and remote transport policy in portable tests.
 - HTTPS server configuration with TLS 1.3 and an optional CA-verified client-certificate requirement, covered by configuration tests.
 
 ## Requires Windows validation
 
-The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. A GitHub Actions Windows cross-target compile is configured and pending; this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat source presence or cross-compilation as runtime proof.
+The Rust Windows service subscribes to selected Security and Sysmon channels using the native Event Log API. It uses future-only delivery on first launch and resumes from saved bookmarks. The `x86_64-pc-windows-msvc` cross-target compile passed in GitHub Actions on commit `b9730fe`; this local machine does not have the Windows Rust standard-library target. No Windows 11 service installation, channel ACL, Sysmon, reconnection, or event-loss test has been run. Do not treat cross-compilation as runtime proof.
 
 ## Not implemented
 
